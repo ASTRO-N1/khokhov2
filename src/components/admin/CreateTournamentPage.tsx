@@ -279,7 +279,7 @@ export function CreateTournamentPage({
                     <SelectContent>
                       <SelectItem value="men">Men</SelectItem>
                       <SelectItem value="women">Women</SelectItem>
-                      <SelectItem value="menandwomen">Men & Women</SelectItem>
+                      <SelectItem value="menandwomen">Men And Women</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

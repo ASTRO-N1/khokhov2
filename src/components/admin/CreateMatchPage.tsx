@@ -10,8 +10,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
-import { ArrowLeft, Calendar, MapPin, Hash } from "lucide-react"; // Added Hash icon
-import { toast } from "sonner@2.0.3";
+import { ArrowLeft, Calendar, MapPin, Hash } from "lucide-react";
+import { toast } from "sonner";
 import { supabase } from "../../supabaseClient";
 import { Tournament, Team } from "../../types";
 
@@ -22,7 +22,7 @@ interface CreateMatchPageProps {
 export function CreateMatchPage({ onBack }: CreateMatchPageProps) {
   const [formData, setFormData] = useState({
     tournament_id: "",
-    match_number: "", // New field
+    match_number: "",
     team_a_id: "",
     team_b_id: "",
     matchDate: "",
@@ -30,7 +30,8 @@ export function CreateMatchPage({ onBack }: CreateMatchPageProps) {
     venue: "",
   });
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
-  const [teams, setTeams] = useState<Team[]>([]);
+  const [allTeams, setAllTeams] = useState<Team[]>([]);
+  const [filteredTeams, setFilteredTeams] = useState<Team[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
@@ -43,12 +44,25 @@ export function CreateMatchPage({ onBack }: CreateMatchPageProps) {
 
       const { data: teamsData, error: teamsError } = await supabase
         .from("teams")
-        .select("id, name");
-      if (teamsData) setTeams(teamsData as Team[]);
+        .select("id, name, tournament_id");
+      if (teamsData) setAllTeams(teamsData as Team[]);
       if (teamsError) toast.error("Failed to fetch teams.");
     };
     fetchData();
   }, []);
+
+  useEffect(() => {
+    if (formData.tournament_id) {
+      setFilteredTeams(
+        allTeams.filter(
+          (team) => (team as any).tournament_id === formData.tournament_id
+        )
+      );
+      setFormData((f) => ({ ...f, team_a_id: "", team_b_id: "" })); // Reset team selection
+    } else {
+      setFilteredTeams([]);
+    }
+  }, [formData.tournament_id, allTeams]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -84,7 +98,7 @@ export function CreateMatchPage({ onBack }: CreateMatchPageProps) {
 
     const { error } = await supabase.from("matches").insert({
       tournament_id: formData.tournament_id,
-      match_number: formData.match_number, // Save the new field
+      match_number: formData.match_number,
       team_a_id: formData.team_a_id,
       team_b_id: formData.team_b_id,
       match_datetime: matchDateTime,
@@ -170,6 +184,7 @@ export function CreateMatchPage({ onBack }: CreateMatchPageProps) {
                   onValueChange={(value) =>
                     setFormData({ ...formData, team_a_id: value })
                   }
+                  disabled={!formData.tournament_id}
                 >
                   <SelectTrigger
                     id="teamA"
@@ -178,7 +193,7 @@ export function CreateMatchPage({ onBack }: CreateMatchPageProps) {
                     <SelectValue placeholder="Select Team A" />
                   </SelectTrigger>
                   <SelectContent>
-                    {teams.map((team) => (
+                    {filteredTeams.map((team) => (
                       <SelectItem key={team.id} value={team.id}>
                         {team.name}
                       </SelectItem>
@@ -193,6 +208,7 @@ export function CreateMatchPage({ onBack }: CreateMatchPageProps) {
                   onValueChange={(value) =>
                     setFormData({ ...formData, team_b_id: value })
                   }
+                  disabled={!formData.tournament_id}
                 >
                   <SelectTrigger
                     id="teamB"
@@ -201,7 +217,7 @@ export function CreateMatchPage({ onBack }: CreateMatchPageProps) {
                     <SelectValue placeholder="Select Team B" />
                   </SelectTrigger>
                   <SelectContent>
-                    {teams
+                    {filteredTeams
                       .filter((t) => t.id !== formData.team_a_id)
                       .map((team) => (
                         <SelectItem key={team.id} value={team.id}>

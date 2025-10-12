@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
-// FIX: Re-added CardHeader and CardTitle imports for player selection cards
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
@@ -96,6 +95,23 @@ type DbScoringAction = {
   user_id: string;
 };
 
+// Helper to safely get string values from action objects
+const getStringValue = (action: any, key: string): string | null => {
+  const val =
+    action[key] ||
+    action[key.replace(/([a-z])([A-Z])/g, "$1_$2").toLowerCase()];
+  return typeof val === "string" && val ? val : null;
+};
+
+// Helper to safely get number values from action objects
+const getNumValue = (action: any, key: string): number => {
+  const val =
+    action[key] !== undefined
+      ? action[key]
+      : action[key.replace(/([a-z])([A-Z])/g, "$1_$2").toLowerCase()];
+  return typeof val === "number" ? val : parseInt(val) || 0;
+};
+
 export function LiveScoringV4({
   match,
   setupData,
@@ -124,7 +140,6 @@ export function LiveScoringV4({
     player: Player | null;
     isDefender: boolean;
   } | null>(null);
-  // Removed explicit useState for defendersOut.
   const [userId, setUserId] = useState<string | null>(null);
 
   const [currentDefendingTeam, setCurrentDefendingTeam] = useState<"A" | "B">(
@@ -160,20 +175,36 @@ export function LiveScoringV4({
     [currentDefendingTeam, teamBSubstitutes, teamASubstitutes]
   );
 
-  // FIX: Derived state for defenders out
+  // MODIFIED LOGIC: Tracks outs within the current "batch" of defenders
   const defendersOut = useMemo(() => {
-    const currentTurnActions = actions.filter(
-      (a) => a.inning === currentInning && a.turn === currentTurn
-    );
-    const outPlayerIds = new Set<string>();
+    const numDefendersInBatch = defenders.length;
+    if (numDefendersInBatch === 0) {
+      return new Set<string>();
+    }
 
-    currentTurnActions.forEach((action) => {
+    const currentTurnActions = actions.filter(
+      (a) =>
+        a.inning === currentInning &&
+        a.turn === currentTurn &&
+        getStringValue(a, "defenderName")
+    );
+    const numOutsThisTurn = currentTurnActions.length;
+
+    // Determine the starting index of the current batch of outs
+    const startIndex =
+      Math.floor(numOutsThisTurn / numDefendersInBatch) * numDefendersInBatch;
+    const actionsForCurrentBatch = currentTurnActions.slice(startIndex);
+
+    const outPlayerIds = new Set<string>();
+    actionsForCurrentBatch.forEach((action) => {
       const defenderPlayer = defenders.find(
         (d) =>
-          d.jerseyNumber === action.defender_jersey &&
-          d.name === action.defender_name
+          d.jerseyNumber === getNumValue(action, "defenderJersey") &&
+          d.name === getStringValue(action, "defenderName")
       );
-      if (defenderPlayer) outPlayerIds.add(defenderPlayer.id);
+      if (defenderPlayer) {
+        outPlayerIds.add(defenderPlayer.id);
+      }
     });
 
     return outPlayerIds;
@@ -267,7 +298,6 @@ export function LiveScoringV4({
 
   const handleDefenderSelect = (defender: Player) => {
     setSelectedDefender(defender);
-    // Do not reset attacker, allow for quick multi-outs by same attacker
     setSelectedSymbol(null);
     setSubstituteMode(false);
     setAttackerToSwap(null);
@@ -352,6 +382,7 @@ export function LiveScoringV4({
     confirmOut();
   };
 
+  // MODIFIED: Added a notification for batch completion
   const confirmOut = async () => {
     const symbolData = SYMBOLS.find((s) => s.type === selectedSymbol);
     if (!symbolData) return;
@@ -406,12 +437,21 @@ export function LiveScoringV4({
     if (error) {
       toast.error("Failed to save action: " + error.message);
     } else {
-      if (selectedDefender) {
-        // Check if all defenders are now out using the DERIVED state size
-        // We use .size + 1 because the current action hasn't yet updated the `actions` state
-        if (defendersOut.size + 1 >= defenders.length) {
-          toast.info("All defenders are out! Starting next batch.");
-        }
+      toast.success(
+        `${
+          selectedDefender ? selectedDefender.name : selectedAttacker?.name
+        } recorded as OUT!`
+      );
+
+      const newTotalOutsThisTurn = currentTurnActions.length + 1;
+      const numDefendersInBatch = defenders.length;
+      if (
+        numDefendersInBatch > 0 &&
+        newTotalOutsThisTurn % numDefendersInBatch === 0
+      ) {
+        toast.info("All defenders out! New batch is now active.", {
+          duration: 4000,
+        });
       }
 
       setSelectedDefender(null);
@@ -436,13 +476,11 @@ export function LiveScoringV4({
     const { error } = await supabase
       .from("scoring_actions")
       .delete()
-      .eq("id", lastAction.id); // Use the action's ID for precise deletion
+      .eq("id", lastAction.id);
 
     if (error) {
       toast.error(`Failed to undo last action: ${error.message}`);
     } else {
-      // We rely entirely on the Supabase listener to remove the action from the 'actions' state.
-      // All derived states (scores, defendersOut) update automatically.
       toast.success("Last action has been successfully undone.");
     }
   };
@@ -479,7 +517,6 @@ export function LiveScoringV4({
       setCurrentTurn(newTurn);
       setTimer(0);
       setIsTimerRunning(false);
-      // Removed setDefendersOut as it is now derived.
       setCurrentDefendingTeam(currentDefendingTeam === "A" ? "B" : "A");
       setSelectedDefender(null);
       setSelectedAttacker(null);
@@ -497,11 +534,10 @@ export function LiveScoringV4({
     setShowEndMatchConfirm(true);
   };
 
-  // FIX: Logic changed to show report, then end match on report close
   const confirmEndMatch = () => {
     setIsTimerRunning(false);
     setShowEndMatchConfirm(false);
-    setIsFinalReport(true); // <-- SET FLAG TO TRUE
+    setIsFinalReport(true);
     setShowConsolidatedReport(true);
   };
 
@@ -512,7 +548,7 @@ export function LiveScoringV4({
 
   const handleCloseReportAndFinish = () => {
     setShowConsolidatedReport(false);
-    setIsFinalReport(false); // Reset state
+    setIsFinalReport(false);
     onEndMatch(actions as unknown as ScoringAction[]);
   };
 
@@ -628,7 +664,6 @@ export function LiveScoringV4({
           match={match}
           setupData={setupData}
           actions={actions as unknown as ScoringAction[]}
-          // FIX: Pass the correct handler based on the flag
           onClose={
             isFinalReport ? handleCloseReportAndFinish : handleCloseReport
           }
@@ -645,7 +680,6 @@ export function LiveScoringV4({
       )}
 
       <div className="min-h-screen bg-gray-50 pb-20">
-        {/* Header - Replaced with Scoreboard Component */}
         <Scoreboard
           match={match}
           scores={scores}
@@ -762,7 +796,7 @@ export function LiveScoringV4({
                           isOut
                             ? "border-gray-200 bg-gray-100 opacity-50 cursor-not-allowed"
                             : selectedDefender?.id === player.id
-                            ? "border-blue-600 bg-blue-100 shadow-md hover:scale-105"
+                            ? "border-blue-600 bg-blue-100 shadow-md scale-105"
                             : substituteMode
                             ? "border-gray-300 opacity-50 cursor-not-allowed"
                             : "border-gray-300 hover:border-blue-400 hover:bg-gray-50 hover:scale-105"
@@ -953,7 +987,6 @@ export function LiveScoringV4({
             </Card>
           </div>
 
-          {/* Scoresheet Section */}
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-gray-900">Scoresheet</h3>

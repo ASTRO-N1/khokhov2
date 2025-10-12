@@ -3,12 +3,20 @@ import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
-import { Users, Upload, Plus, X, Save } from "lucide-react";
-import { toast } from "sonner@2.0.3";
+import { Users, Upload, Plus, X, Save, Trophy } from "lucide-react";
+import { toast } from "sonner";
 import { Badge } from "../ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { supabase } from "../../supabaseClient";
 import Papa from "papaparse";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select";
+import { Tournament } from "../../types";
 
 interface Player {
   name: string;
@@ -25,9 +33,24 @@ export function AddTeamPage() {
     name: "",
     jerseyNumber: "",
   });
+  const [tournaments, setTournaments] = useState<Tournament[]>([]);
+  const [selectedTournamentId, setSelectedTournamentId] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Effect to automatically add/update the captain in the player list
+  useEffect(() => {
+    const fetchTournaments = async () => {
+      const { data, error } = await supabase
+        .from("tournaments")
+        .select("id, name");
+      if (error) {
+        toast.error("Failed to fetch tournaments.");
+      } else {
+        setTournaments(data as Tournament[]);
+      }
+    };
+    fetchTournaments();
+  }, []);
+
   useEffect(() => {
     const jerseyNum = parseInt(captainJersey);
     if (captainName && !isNaN(jerseyNum) && jerseyNum > 0) {
@@ -35,7 +58,6 @@ export function AddTeamPage() {
         name: captainName,
         jerseyNumber: jerseyNum,
       };
-      // Remove any other player with the same jersey number or if captain was already added
       const otherPlayers = players.filter((p) => p.jerseyNumber !== jerseyNum);
       setPlayers([captainAsPlayer, ...otherPlayers]);
     }
@@ -67,7 +89,7 @@ export function AddTeamPage() {
     const captainJerseyNum = parseInt(captainJersey);
     if (jerseyNumber === captainJerseyNum) {
       toast.error(
-        "You cannot remove the captain from the roster. Change the captain's details above."
+        "You cannot remove the captain. Change the captain's details above."
       );
       return;
     }
@@ -118,11 +140,16 @@ export function AddTeamPage() {
     setCoach("");
     setPlayers([]);
     setCurrentPlayer({ name: "", jerseyNumber: "" });
+    setSelectedTournamentId("");
     toast.info("Form has been reset.");
   };
 
   const handleSubmit = async () => {
     const captainJerseyNum = parseInt(captainJersey);
+    if (!selectedTournamentId) {
+      toast.error("Please select a tournament for this team.");
+      return;
+    }
     if (
       !teamName ||
       !captainName ||
@@ -146,7 +173,6 @@ export function AddTeamPage() {
       return;
     }
 
-    // 1. Insert the team
     const { data: teamData, error: teamError } = await supabase
       .from("teams")
       .insert({
@@ -154,6 +180,7 @@ export function AddTeamPage() {
         captain_name: captainName,
         coach_name: coach,
         user_id: user.id,
+        tournament_id: selectedTournamentId,
       })
       .select("id")
       .single();
@@ -164,7 +191,6 @@ export function AddTeamPage() {
       return;
     }
 
-    // 2. Prepare players and find the captain's details
     const playersToInsert = players.map((player) => ({
       name: player.name,
       jersey_number: player.jerseyNumber,
@@ -172,7 +198,6 @@ export function AddTeamPage() {
       user_id: user.id,
     }));
 
-    // 3. Insert all players
     const { data: insertedPlayers, error: playerError } = await supabase
       .from("players")
       .insert(playersToInsert)
@@ -185,10 +210,8 @@ export function AddTeamPage() {
       return;
     }
 
-    // 4. Find the ID of the inserted player who is the captain
     const captainRecord = insertedPlayers.find((p) => p.name === captainName);
     if (captainRecord) {
-      // 5. Update the team with the captain's ID
       const { error: updateError } = await supabase
         .from("teams")
         .update({ captain_id: captainRecord.id })
@@ -207,7 +230,9 @@ export function AddTeamPage() {
     <div className="space-y-6 max-w-6xl">
       <div>
         <h2 className="text-gray-900 mb-1">Add Team</h2>
-        <p className="text-gray-600">Register a new team with players</p>
+        <p className="text-gray-600">
+          Register a new team with players for a specific tournament
+        </p>
       </div>
       <div className="grid lg:grid-cols-2 gap-6">
         <Card>
@@ -218,6 +243,27 @@ export function AddTeamPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="tournament">Tournament *</Label>
+              <Select
+                value={selectedTournamentId}
+                onValueChange={setSelectedTournamentId}
+              >
+                <SelectTrigger
+                  id="tournament"
+                  className="border-gray-300 rounded-lg h-10"
+                >
+                  <SelectValue placeholder="Select tournament" />
+                </SelectTrigger>
+                <SelectContent>
+                  {tournaments.map((t) => (
+                    <SelectItem key={t.id} value={t.id}>
+                      {t.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <div className="space-y-2">
               <Label htmlFor="teamName">Team Name *</Label>
               <Input

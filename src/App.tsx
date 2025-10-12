@@ -336,7 +336,7 @@ function AdminRouter({
       userName={currentUser.name}
     >
       <Routes>
-        <Route path="home" element={<AdminHome matches={mockMatches} />} />
+        <Route path="home" element={<AdminHome />} />
 
         <Route path="tournaments" element={<TournamentsPage />} />
         <Route

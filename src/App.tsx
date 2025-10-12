@@ -347,10 +347,6 @@ function AdminRouter({
           path="tournaments/edit/:tournamentId"
           element={<TournamentEditorWrapper />}
         />
-        <Route
-          path="tournaments/:tournamentId"
-          element={<TournamentDetailsWrapper />}
-        />
 
         <Route path="matches" element={<MatchesPageEnhanced />} />
         <Route

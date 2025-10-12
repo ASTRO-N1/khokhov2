@@ -13,7 +13,7 @@ import {
   Trophy,
   AlertCircle,
 } from "lucide-react";
-import { Tournament } from "../../types";
+import { Tournament, Match, Team } from "../../types";
 import { supabase } from "../../supabaseClient";
 import { toast } from "sonner";
 import {
@@ -26,7 +26,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "../ui/alert-dialog";
-import { useNavigate } from "react-router-dom"; // Import useNavigate
+import { useNavigate } from "react-router-dom";
+import { TournamentDetailsPage } from "./TournamentDetailsPage";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 
 interface DbTournament extends Tournament {
   level?: string;
@@ -38,6 +40,8 @@ export function TournamentsPage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [tournamentToDelete, setTournamentToDelete] =
+    useState<DbTournament | null>(null);
+  const [selectedTournament, setSelectedTournament] =
     useState<DbTournament | null>(null);
 
   useEffect(() => {
@@ -114,8 +118,8 @@ export function TournamentsPage() {
 
   const handleEdit = (tournamentId: string) =>
     navigate(`/admin/tournaments/edit/${tournamentId}`);
-  const handleViewDetails = (tournamentId: string) =>
-    navigate(`/admin/tournaments/${tournamentId}`);
+  const handleViewDetails = (tournament: DbTournament) =>
+    setSelectedTournament(tournament);
   const handleCreate = () => navigate("/admin/tournaments/create");
 
   return (
@@ -220,7 +224,7 @@ export function TournamentsPage() {
                   <Button
                     variant="outline"
                     className="w-full mt-4 border-blue-300 text-blue-700 hover:bg-blue-50 hover:border-blue-400 transition-all"
-                    onClick={() => handleViewDetails(tournament.id)} // Fixed: Calls handleViewDetails
+                    onClick={() => handleViewDetails(tournament)}
                   >
                     View Details
                   </Button>
@@ -260,6 +264,20 @@ export function TournamentsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog
+        open={!!selectedTournament}
+        onOpenChange={() => setSelectedTournament(null)}
+      >
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+          {selectedTournament && (
+            <TournamentDetailsPage
+              tournament={selectedTournament}
+              onBack={() => setSelectedTournament(null)}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

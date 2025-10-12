@@ -9,6 +9,7 @@ import { Badge } from "../ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { supabase } from "../../supabaseClient";
 import Papa from "papaparse";
+import * as XLSX from "xlsx"; // Import the new library
 import {
   Select,
   SelectContent,
@@ -96,6 +97,37 @@ export function AddTeamPage() {
     setPlayers(players.filter((p) => p.jerseyNumber !== jerseyNumber));
   };
 
+  const processImportedData = (data: any[]) => {
+    const newPlayers: Player[] = [];
+    const existingJerseys = new Set(players.map((p) => p.jerseyNumber));
+    let addedCount = 0;
+
+    data.forEach((row: any) => {
+      // Look for common header names
+      const name = row["Player Name"] || row["name"] || row["Name"];
+      const jerseyStr =
+        row["Jersey Number"] || row["jerseyNumber"] || row["Jersey"];
+
+      if (name && jerseyStr) {
+        const jerseyNumber = parseInt(String(jerseyStr));
+        if (!isNaN(jerseyNumber) && !existingJerseys.has(jerseyNumber)) {
+          newPlayers.push({ name: String(name), jerseyNumber });
+          existingJerseys.add(jerseyNumber);
+          addedCount++;
+        }
+      }
+    });
+
+    if (addedCount > 0) {
+      setPlayers((prevPlayers) => [...prevPlayers, ...newPlayers]);
+      toast.success(`${addedCount} players successfully imported.`);
+    } else {
+      toast.warning(
+        "No new players were imported. Check the file format or jersey numbers."
+      );
+    }
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) {
@@ -103,34 +135,37 @@ export function AddTeamPage() {
       return;
     }
 
-    Papa.parse(file, {
-      header: true,
-      skipEmptyLines: true,
-      complete: (results) => {
-        const newPlayers: Player[] = [];
-        const existingJerseys = new Set(players.map((p) => p.jerseyNumber));
-        let addedCount = 0;
+    const fileExtension = file.name.split(".").pop()?.toLowerCase();
 
-        results.data.forEach((row: any) => {
-          const name = row["Player Name"] || row["name"];
-          const jerseyStr = row["Jersey Number"] || row["jerseyNumber"];
-          if (name && jerseyStr) {
-            const jerseyNumber = parseInt(jerseyStr);
-            if (!isNaN(jerseyNumber) && !existingJerseys.has(jerseyNumber)) {
-              newPlayers.push({ name, jerseyNumber });
-              existingJerseys.add(jerseyNumber);
-              addedCount++;
-            }
-          }
-        });
-        setPlayers((prevPlayers) => [...prevPlayers, ...newPlayers]);
-        toast.success(`${addedCount} players successfully imported from CSV.`);
-      },
-      error: (error) => {
-        toast.error(`CSV parsing error: ${error.message}`);
-      },
-    });
-    e.target.value = "";
+    if (fileExtension === "csv") {
+      Papa.parse(file, {
+        header: true,
+        skipEmptyLines: true,
+        complete: (results) => processImportedData(results.data),
+        error: (error) => toast.error(`CSV parsing error: ${error.message}`),
+      });
+    } else if (fileExtension === "xlsx" || fileExtension === "xls") {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const data = event.target?.result;
+          const workbook = XLSX.read(data, { type: "array" });
+          const sheetName = workbook.SheetNames[0];
+          const worksheet = workbook.Sheets[sheetName];
+          const jsonData = XLSX.utils.sheet_to_json(worksheet);
+          processImportedData(jsonData);
+        } catch (error) {
+          toast.error("Failed to process Excel file.");
+          console.error(error);
+        }
+      };
+      reader.onerror = () => toast.error("Failed to read the file.");
+      reader.readAsArrayBuffer(file);
+    } else {
+      toast.error("Unsupported file type. Please upload a CSV or Excel file.");
+    }
+
+    e.target.value = ""; // Reset file input
   };
 
   const handleReset = () => {
@@ -145,6 +180,7 @@ export function AddTeamPage() {
   };
 
   const handleSubmit = async () => {
+    // ... (handleSubmit logic remains the same)
     const captainJerseyNum = parseInt(captainJersey);
     if (!selectedTournamentId) {
       toast.error("Please select a tournament for this team.");
@@ -327,7 +363,7 @@ export function AddTeamPage() {
             <Tabs defaultValue="manual">
               <TabsList className="grid w-full grid-cols-2">
                 <TabsTrigger value="manual">Manual Entry</TabsTrigger>
-                <TabsTrigger value="csv">CSV Upload</TabsTrigger>
+                <TabsTrigger value="csv">File Upload</TabsTrigger>
               </TabsList>
               <TabsContent value="manual" className="space-y-4 pt-4">
                 <div className="space-y-2">
@@ -373,11 +409,11 @@ export function AddTeamPage() {
                 <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
                   <Upload className="w-12 h-12 text-gray-400 mx-auto mb-3" />
                   <p className="text-sm text-gray-600 mb-4">
-                    Upload CSV file with player details.
+                    Upload a CSV or Excel file.
                   </p>
                   <Input
                     type="file"
-                    accept=".csv"
+                    accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
                     onChange={handleFileUpload}
                     className="hidden"
                     id="csvUpload"
@@ -392,7 +428,8 @@ export function AddTeamPage() {
                 </div>
                 <div className="bg-gray-50 rounded-lg p-4">
                   <p className="text-xs text-gray-600 mb-2">
-                    CSV Format (headers must match):
+                    File Format: Headers must be one of "Player Name", "Name",
+                    or "name" and "Jersey Number", "Jersey", or "jerseyNumber".
                   </p>
                   <code className="text-xs text-gray-800">
                     "Player Name","Jersey Number"

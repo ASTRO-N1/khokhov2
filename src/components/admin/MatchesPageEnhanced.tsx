@@ -11,8 +11,9 @@ import {
   Eye,
   Play,
   AlertCircle,
+  Trophy,
 } from "lucide-react";
-import { Match } from "../../types";
+import { Match, Tournament } from "../../types";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { supabase } from "../../supabaseClient";
 import { toast } from "sonner";
@@ -27,59 +28,84 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { useNavigate } from "react-router-dom";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../ui/select";
+import { Label } from "../ui/label";
 
-interface MatchesPageEnhancedProps {}
-
-export function MatchesPageEnhanced({}: MatchesPageEnhancedProps) {
+export function MatchesPageEnhanced() {
   const navigate = useNavigate();
-  const [matches, setMatches] = useState<Match[]>([]);
+  const [allMatches, setAllMatches] = useState<Match[]>([]);
+  const [tournaments, setTournaments] = useState<Tournament[]>([]);
+  const [selectedTournamentId, setSelectedTournamentId] = useState<
+    string | null
+  >(null);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [matchToDelete, setMatchToDelete] = useState<Match | null>(null);
 
   useEffect(() => {
-    fetchMatches();
-  }, []);
+    async function fetchData() {
+      setLoading(true);
+      const tournamentsPromise = supabase
+        .from("tournaments")
+        .select("id, name");
+      const matchesPromise = supabase
+        .from("matches")
+        .select(
+          `id, match_number, match_datetime, venue, status, score_a, score_b, tournament_id, tournaments ( id, name ), team_a:teams!matches_team_a_id_fkey ( id, name, captain_name ), team_b:teams!matches_team_b_id_fkey ( id, name, captain_name )`
+        )
+        .order("match_datetime", { ascending: false });
 
-  async function fetchMatches() {
-    setLoading(true);
-    const { data, error } = await supabase
-      .from("matches")
-      .select(
-        `id, match_number, match_datetime, venue, status, score_a, score_b, tournaments ( id, name ), team_a:teams!matches_team_a_id_fkey ( id, name, captain_name ), team_b:teams!matches_team_b_id_fkey ( id, name, captain_name )`
-      )
-      .order("match_datetime", { ascending: false });
+      const [tournamentsResult, matchesResult] = await Promise.all([
+        tournamentsPromise,
+        matchesPromise,
+      ]);
 
-    if (error) {
-      toast.error(`Error fetching matches: ${error.message}`);
-    } else if (data) {
-      const formattedMatches: Match[] = data.map((m: any) => ({
-        id: m.id,
-        matchNumber: m.match_number || `M-${m.id.substring(0, 4)}`,
-        tournamentId: m.tournaments.id,
-        tournamentName: m.tournaments.name,
-        teamA: {
-          id: m.team_a.id,
-          name: m.team_a.name,
-          captain: m.team_a.captain_name,
-          players: [],
-        },
-        teamB: {
-          id: m.team_b.id,
-          name: m.team_b.name,
-          captain: m.team_b.captain_name,
-          players: [],
-        },
-        dateTime: m.match_datetime,
-        venue: m.venue,
-        status: m.status,
-        scoreA: m.score_a,
-        scoreB: m.score_b,
-      }));
-      setMatches(formattedMatches);
+      if (tournamentsResult.error) {
+        toast.error(
+          `Error fetching tournaments: ${tournamentsResult.error.message}`
+        );
+      } else if (tournamentsResult.data) {
+        setTournaments(tournamentsResult.data as Tournament[]);
+      }
+
+      if (matchesResult.error) {
+        toast.error(`Error fetching matches: ${matchesResult.error.message}`);
+      } else if (matchesResult.data) {
+        const formattedMatches: Match[] = matchesResult.data.map((m: any) => ({
+          id: m.id,
+          matchNumber: m.match_number || `M-${m.id.substring(0, 4)}`,
+          tournamentId: m.tournament_id,
+          tournamentName: m.tournaments.name,
+          teamA: {
+            id: m.team_a.id,
+            name: m.team_a.name,
+            captain: m.team_a.captain_name,
+            players: [],
+          },
+          teamB: {
+            id: m.team_b.id,
+            name: m.team_b.name,
+            captain: m.team_b.captain_name,
+            players: [],
+          },
+          dateTime: m.match_datetime,
+          venue: m.venue,
+          status: m.status,
+          scoreA: m.score_a,
+          scoreB: m.score_b,
+        }));
+        setAllMatches(formattedMatches);
+      }
+      setLoading(false);
     }
-    setLoading(false);
-  }
+    fetchData();
+  }, []);
 
   const handleDeleteMatch = async () => {
     if (!matchToDelete) return;
@@ -92,7 +118,42 @@ export function MatchesPageEnhanced({}: MatchesPageEnhancedProps) {
       toast.error(`Failed to delete match: ${error.message}`);
     } else {
       toast.success(`Match ${matchToDelete.matchNumber} deleted.`);
-      fetchMatches();
+      // Refetch matches for the selected tournament
+      const { data, error: refetchError } = await supabase
+        .from("matches")
+        .select(
+          `id, match_number, match_datetime, venue, status, score_a, score_b, tournament_id, tournaments ( id, name ), team_a:teams!matches_team_a_id_fkey ( id, name, captain_name ), team_b:teams!matches_team_b_id_fkey ( id, name, captain_name )`
+        )
+        .order("match_datetime", { ascending: false });
+
+      if (refetchError) {
+        toast.error("Failed to refresh matches list.");
+      } else if (data) {
+        const formattedMatches: Match[] = data.map((m: any) => ({
+          id: m.id,
+          matchNumber: m.match_number || `M-${m.id.substring(0, 4)}`,
+          tournamentId: m.tournament_id,
+          tournamentName: m.tournaments.name,
+          teamA: {
+            id: m.team_a.id,
+            name: m.team_a.name,
+            captain: m.team_a.captain_name,
+            players: [],
+          },
+          teamB: {
+            id: m.team_b.id,
+            name: m.team_b.name,
+            captain: m.team_b.captain_name,
+            players: [],
+          },
+          dateTime: m.match_datetime,
+          venue: m.venue,
+          status: m.status,
+          scoreA: m.score_a,
+          scoreB: m.score_b,
+        }));
+        setAllMatches(formattedMatches);
+      }
     }
     setMatchToDelete(null);
   };
@@ -114,7 +175,11 @@ export function MatchesPageEnhanced({}: MatchesPageEnhancedProps) {
     }
   };
 
-  const filteredMatches = matches.filter(
+  const matchesForSelectedTournament = allMatches.filter(
+    (m) => m.tournamentId === selectedTournamentId
+  );
+
+  const filteredMatches = matchesForSelectedTournament.filter(
     (m) =>
       (m.teamA?.name?.toLowerCase() || "").includes(
         searchQuery.toLowerCase()
@@ -122,10 +187,9 @@ export function MatchesPageEnhanced({}: MatchesPageEnhancedProps) {
       (m.teamB?.name?.toLowerCase() || "").includes(
         searchQuery.toLowerCase()
       ) ||
-      (m.tournamentName?.toLowerCase() || "").includes(
-        searchQuery.toLowerCase()
-      )
+      (m.matchNumber?.toLowerCase() || "").includes(searchQuery.toLowerCase())
   );
+
   const liveMatches = filteredMatches.filter((m) => m.status === "live");
   const upcomingMatches = filteredMatches.filter(
     (m) => m.status === "upcoming"
@@ -249,105 +313,142 @@ export function MatchesPageEnhanced({}: MatchesPageEnhancedProps) {
           </div>
           <Button
             className="bg-white text-blue-600 hover:bg-blue-50 shadow-md"
-            onClick={() => navigate("/admin/matches/create")} // Updated path
+            onClick={() => navigate("/admin/matches/create")}
           >
             <Plus className="w-4 h-4 mr-2" />
             Create Match
           </Button>
         </div>
       </div>
+
       <Card className="shadow-md">
         <CardContent className="pt-6">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-            <Input
-              placeholder="Search matches by team name or tournament..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10 border-gray-300 rounded-lg h-11"
-            />
+          <div className="space-y-2">
+            <Label
+              htmlFor="tournament-select"
+              className="text-gray-700 flex items-center gap-2"
+            >
+              <Trophy className="w-5 h-5 text-blue-600" />
+              Select a Tournament to View Matches
+            </Label>
+            <Select onValueChange={(value) => setSelectedTournamentId(value)}>
+              <SelectTrigger
+                id="tournament-select"
+                className="border-gray-300 rounded-lg h-11"
+              >
+                <SelectValue placeholder="Choose a tournament..." />
+              </SelectTrigger>
+              <SelectContent>
+                {tournaments.map((t) => (
+                  <SelectItem key={t.id} value={t.id}>
+                    {t.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </CardContent>
       </Card>
 
-      {loading ? (
-        <p>Loading matches...</p>
-      ) : (
-        <Tabs defaultValue="upcoming" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="upcoming" className="relative">
-              <span className="hidden sm:inline">Upcoming Matches</span>
-              <span className="inline sm:hidden">Upcoming</span>
-              {upcomingMatches.length > 0 && (
-                <Badge className="ml-2 bg-blue-600">
-                  {upcomingMatches.length}
-                </Badge>
-              )}
-            </TabsTrigger>
-            <TabsTrigger value="live">
-              <span className="hidden sm:inline">Live Matches</span>
-              <span className="inline sm:hidden">Live</span>
-              {liveMatches.length > 0 && (
-                <Badge className="ml-2 bg-red-600">{liveMatches.length}</Badge>
-              )}
-            </TabsTrigger>
-            <TabsTrigger value="finished">
-              <span className="hidden sm:inline">Finished Matches</span>
-              <span className="inline sm:hidden">Finished</span>
-              {finishedMatches.length > 0 && (
-                <Badge className="ml-2 bg-green-600">
-                  {finishedMatches.length}
-                </Badge>
-              )}
-            </TabsTrigger>
-          </TabsList>
-          <TabsContent value="upcoming" className="space-y-4">
-            {upcomingMatches.length === 0 ? (
-              <Card>
-                <CardContent className="p-8 text-center text-gray-500">
-                  No upcoming matches scheduled
-                </CardContent>
-              </Card>
-            ) : (
-              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {upcomingMatches.map((match) => (
-                  <MatchCard key={match.id} match={match} />
-                ))}
+      {selectedTournamentId && (
+        <>
+          <Card className="shadow-md">
+            <CardContent className="pt-6">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                <Input
+                  placeholder="Search matches by team name or match number..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-10 border-gray-300 rounded-lg h-11"
+                />
               </div>
-            )}
-          </TabsContent>
-          <TabsContent value="live" className="space-y-4">
-            {liveMatches.length === 0 ? (
-              <Card>
-                <CardContent className="p-8 text-center text-gray-500">
-                  No live matches at the moment
-                </CardContent>
-              </Card>
-            ) : (
-              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {liveMatches.map((match) => (
-                  <MatchCard key={match.id} match={match} />
-                ))}
-              </div>
-            )}
-          </TabsContent>
-          <TabsContent value="finished" className="space-y-4">
-            {finishedMatches.length === 0 ? (
-              <Card>
-                <CardContent className="p-8 text-center text-gray-500">
-                  No finished matches
-                </CardContent>
-              </Card>
-            ) : (
-              <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {finishedMatches.map((match) => (
-                  <MatchCard key={match.id} match={match} />
-                ))}
-              </div>
-            )}
-          </TabsContent>
-        </Tabs>
+            </CardContent>
+          </Card>
+
+          {loading ? (
+            <p>Loading matches...</p>
+          ) : (
+            <Tabs defaultValue="upcoming" className="space-y-6">
+              <TabsList className="grid w-full grid-cols-3">
+                <TabsTrigger value="upcoming">
+                  <span className="hidden sm:inline">Upcoming</span>
+                  <span className="inline sm:hidden">Up</span>
+                  {upcomingMatches.length > 0 && (
+                    <Badge className="ml-2 bg-blue-600">
+                      {upcomingMatches.length}
+                    </Badge>
+                  )}
+                </TabsTrigger>
+                <TabsTrigger value="live">
+                  <span className="hidden sm:inline">Live</span>
+                  <span className="inline sm:hidden">Live</span>
+                  {liveMatches.length > 0 && (
+                    <Badge className="ml-2 bg-red-600">
+                      {liveMatches.length}
+                    </Badge>
+                  )}
+                </TabsTrigger>
+                <TabsTrigger value="finished">
+                  <span className="hidden sm:inline">Finished</span>
+                  <span className="inline sm:hidden">Fin</span>
+                  {finishedMatches.length > 0 && (
+                    <Badge className="ml-2 bg-green-600">
+                      {finishedMatches.length}
+                    </Badge>
+                  )}
+                </TabsTrigger>
+              </TabsList>
+              <TabsContent value="upcoming">
+                {upcomingMatches.length === 0 ? (
+                  <Card>
+                    <CardContent className="p-8 text-center text-gray-500">
+                      No upcoming matches for this tournament.
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {upcomingMatches.map((match) => (
+                      <MatchCard key={match.id} match={match} />
+                    ))}
+                  </div>
+                )}
+              </TabsContent>
+              <TabsContent value="live">
+                {liveMatches.length === 0 ? (
+                  <Card>
+                    <CardContent className="p-8 text-center text-gray-500">
+                      No live matches for this tournament.
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {liveMatches.map((match) => (
+                      <MatchCard key={match.id} match={match} />
+                    ))}
+                  </div>
+                )}
+              </TabsContent>
+              <TabsContent value="finished">
+                {finishedMatches.length === 0 ? (
+                  <Card>
+                    <CardContent className="p-8 text-center text-gray-500">
+                      No finished matches for this tournament.
+                    </CardContent>
+                  </Card>
+                ) : (
+                  <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {finishedMatches.map((match) => (
+                      <MatchCard key={match.id} match={match} />
+                    ))}
+                  </div>
+                )}
+              </TabsContent>
+            </Tabs>
+          )}
+        </>
       )}
+
       <AlertDialog
         open={!!matchToDelete}
         onOpenChange={() => setMatchToDelete(null)}

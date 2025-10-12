@@ -12,7 +12,7 @@ import {
   Trash2,
   AlertCircle,
 } from "lucide-react";
-import { Team } from "../../types";
+import { Team, Tournament } from "../../types";
 import {
   Accordion,
   AccordionContent,
@@ -31,13 +31,15 @@ import {
 } from "../ui/alert-dialog";
 import { supabase } from "../../supabaseClient";
 import { toast } from "sonner";
-import { useNavigate } from "react-router-dom"; // Import useNavigate
+import { useNavigate } from "react-router-dom";
 
-interface TeamsPageProps {} // Removed onNavigate/onEdit from props
+interface EnrichedTeam extends Team {
+  tournamentName: string;
+}
 
-export function TeamsPage({}: TeamsPageProps) {
-  const navigate = useNavigate(); // Initialize useNavigate
-  const [teams, setTeams] = useState<Team[]>([]);
+export function TeamsPage() {
+  const navigate = useNavigate();
+  const [teams, setTeams] = useState<EnrichedTeam[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [teamToDelete, setTeamToDelete] = useState<Team | null>(null);
@@ -50,8 +52,9 @@ export function TeamsPage({}: TeamsPageProps) {
     setLoading(true);
     const { data: teamsData, error: teamsError } = await supabase
       .from("teams")
-      .select("*")
+      .select("*, tournament:tournaments(name)")
       .order("name");
+
     if (teamsError) {
       toast.error(`Error fetching teams: ${teamsError.message}`);
       setLoading(false);
@@ -61,16 +64,18 @@ export function TeamsPage({}: TeamsPageProps) {
     const { data: playersData, error: playersError } = await supabase
       .from("players")
       .select("*");
+
     if (playersError) {
       toast.error(`Error fetching players: ${playersError.message}`);
       setLoading(false);
       return;
     }
 
-    const combinedData = teamsData.map((team) => ({
+    const combinedData = teamsData.map((team: any) => ({
       id: team.id,
       name: team.name,
       captain: team.captain_name,
+      tournamentName: team.tournament?.name || "N/A",
       players: playersData
         .filter((player) => player.team_id === team.id)
         .map((p) => ({
@@ -83,7 +88,7 @@ export function TeamsPage({}: TeamsPageProps) {
         })),
     }));
 
-    setTeams(combinedData as Team[]);
+    setTeams(combinedData as EnrichedTeam[]);
     setLoading(false);
   }
 
@@ -105,7 +110,8 @@ export function TeamsPage({}: TeamsPageProps) {
   const filteredTeams = teams.filter(
     (team) =>
       team.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      team.captain.toLowerCase().includes(searchQuery.toLowerCase())
+      team.captain.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      team.tournamentName.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   return (
@@ -121,7 +127,7 @@ export function TeamsPage({}: TeamsPageProps) {
           </div>
           <Button
             className="bg-white text-blue-600 hover:bg-blue-50 shadow-md"
-            onClick={() => navigate("/admin/teams/add")} // Updated path
+            onClick={() => navigate("/admin/teams/add")}
           >
             <Plus className="w-4 h-4 mr-2" />
             Add Team
@@ -133,7 +139,7 @@ export function TeamsPage({}: TeamsPageProps) {
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
             <Input
-              placeholder="Search teams by name or captain..."
+              placeholder="Search teams by name, captain, or tournament..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="pl-10 border-gray-300 rounded-lg h-11"
@@ -165,6 +171,9 @@ export function TeamsPage({}: TeamsPageProps) {
                         <Crown className="w-3 h-3 text-yellow-600" />
                         Captain: {team.captain}
                       </p>
+                      <Badge variant="outline" className="mt-1">
+                        {team.tournamentName}
+                      </Badge>
                     </div>
                   </div>
                   <Badge className="bg-blue-600">
@@ -207,7 +216,7 @@ export function TeamsPage({}: TeamsPageProps) {
                   </div>
                   <div className="flex gap-2 pt-4 border-t border-gray-200">
                     <Button
-                      onClick={() => navigate(`/admin/teams/edit/${team.id}`)} // Updated path
+                      onClick={() => navigate(`/admin/teams/edit/${team.id}`)}
                       variant="outline"
                       size="sm"
                       className="hover:bg-blue-50 hover:text-blue-700 hover:border-blue-300 transition-all"

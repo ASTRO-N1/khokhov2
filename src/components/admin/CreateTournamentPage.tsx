@@ -279,8 +279,7 @@ export function CreateTournamentPage({
                     <SelectContent>
                       <SelectItem value="men">Men</SelectItem>
                       <SelectItem value="women">Women</SelectItem>
-                      <SelectItem value="boys">Boys</SelectItem>
-                      <SelectItem value="girls">Girls</SelectItem>
+                      <SelectItem value="menandwomen">Men & Women</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

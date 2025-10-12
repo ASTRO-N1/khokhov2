@@ -14,12 +14,10 @@ interface ConsolidatedReportProps {
 
 // Helper function to safely get integer value from snake_case or camelCase field
 const getNumValue = (action: any, key: string): number => {
-  // Check camelCase first, then snake_case
   const val =
     action[key] !== undefined
       ? action[key]
       : action[key.replace(/([a-z])([A-Z])/g, "$1_$2").toLowerCase()];
-  // Ensure it's treated as a number
   return typeof val === "number" ? val : parseInt(val) || 0;
 };
 
@@ -34,7 +32,6 @@ const getStringValue = (action: any, key: string): string | null => {
 // Helper functions to safely access time and ID values
 const getRunTime = (action: any): number => getNumValue(action, "runTime");
 const getPerTime = (action: any): number => getNumValue(action, "perTime");
-// FIX: Ensure we check both camelCase and snake_case for the scoring ID
 const getScoringTeamId = (action: any): string | null =>
   action.scoringTeamId || action.scoring_team_id || null;
 
@@ -53,41 +50,33 @@ export function ConsolidatedReport({
       .padStart(2, "0")}`;
   };
 
-  // FIX: Calculate overall scores using the actual team IDs (UUIDs)
   const teamAScore = actions
     .filter((a) => getScoringTeamId(a) === match.teamA.id)
-    .reduce((sum, a) => sum + a.points, 0);
+    .reduce((sum, a) => sum + getNumValue(a, "points"), 0);
   const teamBScore = actions
     .filter((a) => getScoringTeamId(a) === match.teamB.id)
-    .reduce((sum, a) => sum + a.points, 0);
+    .reduce((sum, a) => sum + getNumValue(a, "points"), 0);
 
-  // Determine winner based on calculated score
   const winnerName =
     teamAScore > teamBScore
       ? match.teamA.name
       : teamBScore > teamAScore
       ? match.teamB.name
       : "Draw";
-  const winnerTeam =
-    teamAScore > teamBScore ? "A" : teamBScore > teamAScore ? "B" : "Draw";
 
-  // Get unique innings
-  const innings = Array.from(new Set(actions.map((a) => a.inning))).sort(
-    (a, b) => a - b
-  );
+  const innings = Array.from(
+    new Set(actions.map((a) => getNumValue(a, "inning")))
+  ).sort((a, b) => a - b);
 
-  // Group actions by inning
   const actionsByInning = innings.map((inning) => ({
     inning,
-    actions: actions.filter((a) => a.inning === inning),
+    actions: actions.filter((a) => getNumValue(a, "inning") === inning),
   }));
 
-  // Calculate statistics
   const totalOuts = actions.length;
   const totalTime =
     actions.length > 0 ? Math.max(...actions.map(getRunTime)) : 0;
 
-  // Get top performers
   const attackerStats: {
     [key: string]: { name: string; points: number; outs: number };
   } = {};
@@ -143,7 +132,6 @@ export function ConsolidatedReport({
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
       <div className="sticky top-0 bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-6 rounded-t-lg flex items-center justify-between">
         <div>
           <h2 className="text-white mb-1">Match Consolidated Report</h2>
@@ -162,9 +150,25 @@ export function ConsolidatedReport({
       </div>
 
       <div className="p-6 space-y-6 overflow-y-auto flex-1">
-        {/* WINNER ANNOUNCEMENT (Visual integration from old design) */}
+        {/* WINNER ANNOUNCEMENT - CORRECTED WITH INLINE STYLE */}
+        <div
+          className="text-white p-6 rounded-lg text-center shadow-lg"
+          style={{
+            background: "linear-gradient(to right, #eab308, #ea580c)",
+          }}
+        >
+          <Trophy className="w-12 h-12 mx-auto mb-2" />
+          <p className="text-sm font-medium tracking-wider uppercase">
+            {winnerName === "Draw" ? "Match Result" : "Winner"}
+          </p>
+          <h3 className="text-3xl font-bold">{winnerName}</h3>
+          {winnerName !== "Draw" && (
+            <p className="text-sm mt-1">
+              Final Score: {teamAScore} - {teamBScore}
+            </p>
+          )}
+        </div>
 
-        {/* Match Summary */}
         <Card className="border-2 border-blue-200">
           <CardHeader className="bg-blue-50 border-b">
             <CardTitle className="flex items-center gap-2 text-blue-900">
@@ -197,8 +201,6 @@ export function ConsolidatedReport({
                 </p>
               </div>
             </div>
-
-            {/* Team Scores */}
             <div className="grid md:grid-cols-2 gap-6 mt-6 pt-6 border-t">
               <div className="bg-blue-50 border-2 border-blue-300 rounded-lg p-4">
                 <p className="text-sm text-blue-700 mb-2 text-center">
@@ -222,9 +224,7 @@ export function ConsolidatedReport({
           </CardContent>
         </Card>
 
-        {/* Top Performers */}
         <div className="grid md:grid-cols-2 gap-6">
-          {/* Top Attackers */}
           <Card>
             <CardHeader className="bg-red-50 border-b">
               <CardTitle className="flex items-center gap-2 text-red-900">
@@ -273,8 +273,6 @@ export function ConsolidatedReport({
               </div>
             </CardContent>
           </Card>
-
-          {/* Top Defenders */}
           <Card>
             <CardHeader className="bg-blue-50 border-b">
               <CardTitle className="flex items-center gap-2 text-blue-900">
@@ -325,7 +323,6 @@ export function ConsolidatedReport({
           </Card>
         </div>
 
-        {/* Inning-wise Breakdown */}
         <Card>
           <CardHeader className="bg-indigo-50 border-b">
             <CardTitle className="flex items-center gap-2 text-indigo-900">
@@ -382,7 +379,6 @@ export function ConsolidatedReport({
           </CardContent>
         </Card>
 
-        {/* Complete Action Log */}
         <Card>
           <CardHeader className="bg-gray-50 border-b">
             <CardTitle className="text-gray-900">Complete Action Log</CardTitle>
@@ -424,13 +420,20 @@ export function ConsolidatedReport({
                 </thead>
                 <tbody>
                   {actions.map((action, index) => (
-                    <tr key={action.id} className="border-b hover:bg-gray-50">
+                    <tr
+                      key={(action as any).id}
+                      className="border-b hover:bg-gray-50"
+                    >
                       <td className="p-3 text-gray-900">{index + 1}</td>
                       <td className="p-3">
-                        <Badge variant="outline">{action.inning}</Badge>
+                        <Badge variant="outline">
+                          {getNumValue(action, "inning")}
+                        </Badge>
                       </td>
                       <td className="p-3">
-                        <Badge variant="outline">{action.turn}</Badge>
+                        <Badge variant="outline">
+                          {getNumValue(action, "turn")}
+                        </Badge>
                       </td>
                       <td className="p-3">
                         <Badge
@@ -455,7 +458,7 @@ export function ConsolidatedReport({
                         {getStringValue(action, "attackerName")}
                       </td>
                       <td className="p-3 text-sm text-gray-600">
-                        {action.symbol}
+                        {(action as any).symbol}
                       </td>
                       <td className="p-3 font-mono text-blue-600">
                         {formatTime(getNumValue(action, "perTime"))}
@@ -481,7 +484,6 @@ export function ConsolidatedReport({
           </CardContent>
         </Card>
 
-        {/* Close Button */}
         <div className="flex justify-end">
           <Button onClick={onClose} className="bg-blue-600 hover:bg-blue-700">
             Close Report

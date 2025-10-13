@@ -372,8 +372,7 @@ export function MatchesPageEnhanced() {
             <Tabs defaultValue="upcoming" className="space-y-6">
               <TabsList className="grid w-full grid-cols-3">
                 <TabsTrigger value="upcoming">
-                  <span className="hidden sm:inline">Upcoming</span>
-                  <span className="inline sm:hidden">Up</span>
+                  Upcoming
                   {upcomingMatches.length > 0 && (
                     <Badge className="ml-2 bg-blue-600">
                       {upcomingMatches.length}
@@ -381,8 +380,7 @@ export function MatchesPageEnhanced() {
                   )}
                 </TabsTrigger>
                 <TabsTrigger value="live">
-                  <span className="hidden sm:inline">Live</span>
-                  <span className="inline sm:hidden">Live</span>
+                  Live
                   {liveMatches.length > 0 && (
                     <Badge className="ml-2 bg-red-600">
                       {liveMatches.length}
@@ -390,8 +388,7 @@ export function MatchesPageEnhanced() {
                   )}
                 </TabsTrigger>
                 <TabsTrigger value="finished">
-                  <span className="hidden sm:inline">Finished</span>
-                  <span className="inline sm:hidden">Fin</span>
+                  Finished
                   {finishedMatches.length > 0 && (
                     <Badge className="ml-2 bg-green-600">
                       {finishedMatches.length}

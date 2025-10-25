@@ -268,6 +268,8 @@ export function CreateTournamentPage({
                       <SelectValue placeholder="Select level" />
                     </SelectTrigger>
                     <SelectContent>
+                      <SelectItem value="zonal">Zonal</SelectItem>
+                      <SelectItem value="university">University</SelectItem>
                       <SelectItem value="national">National</SelectItem>
                       <SelectItem value="state">State</SelectItem>
                       <SelectItem value="district">District</SelectItem>

@@ -65,6 +65,11 @@ export function AddTeamPage() {
   }, [captainName, captainJersey]);
 
   const handleAddPlayer = () => {
+    if (players.length >= 15) {
+      toast.error("Maximum of 15 players allowed per team.");
+      return;
+    }
+
     if (!currentPlayer.name || !currentPlayer.jerseyNumber) {
       toast.error("Please enter player name and jersey number.");
       return;
@@ -101,8 +106,13 @@ export function AddTeamPage() {
     const newPlayers: Player[] = [];
     const existingJerseys = new Set(players.map((p) => p.jerseyNumber));
     let addedCount = 0;
+    let skippedCount = 0;
 
     data.forEach((row: any) => {
+      if (players.length + addedCount >= 15) {
+        skippedCount++;
+        return; // Stop processing rows if limit is reached
+      }
       // Look for common header names
       const name = row["Player Name"] || row["name"] || row["Name"];
       const jerseyStr =
@@ -120,7 +130,13 @@ export function AddTeamPage() {
 
     if (addedCount > 0) {
       setPlayers((prevPlayers) => [...prevPlayers, ...newPlayers]);
-      toast.success(`${addedCount} players successfully imported.`);
+      let message = `${addedCount} players successfully imported.`;
+      if (skippedCount > 0) {
+        message += ` ${skippedCount} players were skipped due to the 15-player limit.`;
+        toast.warning(message);
+      } else {
+        toast.success(message);
+      }
     } else {
       toast.warning(
         "No new players were imported. Check the file format or jersey numbers."
@@ -345,12 +361,7 @@ export function AddTeamPage() {
             <div className="pt-2">
               <p className="text-sm text-gray-600">
                 Total Players:{" "}
-                <span className="font-medium">{players.length}</span>
-                {players.length < 9 && (
-                  <span className="text-red-600 ml-2">
-                    (Minimum 9 required)
-                  </span>
-                )}
+                <span className="font-medium">{players.length}</span> / 15
               </p>
             </div>
           </CardContent>

@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Power,
   AlertTriangle,
+  RotateCcw, // <-- Import RotateCcw
 } from "lucide-react";
 import { Match } from "../../types";
 
@@ -22,6 +23,7 @@ interface ScoreboardProps {
   onUndo: () => void;
   onNextTurn: () => void;
   onEndMatch: () => void;
+  onResetTimer: () => void; // <-- Add the new prop
 }
 
 export function Scoreboard({
@@ -36,6 +38,7 @@ export function Scoreboard({
   onUndo,
   onNextTurn,
   onEndMatch,
+  onResetTimer, // <-- Destructure the new prop
 }: ScoreboardProps) {
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -49,7 +52,8 @@ export function Scoreboard({
     <div className="bg-white border-b border-gray-200 sticky top-0 z-50 shadow-sm">
       <div className="max-w-7xl mx-auto px-4 lg:px-6 py-3">
         {/* Scores and Timer */}
-        <div className="flex items-center justify-center gap-6 mb-3">
+        {/* ... (Scores and Timer display code remains the same) ... */}
+         <div className="flex items-center justify-center gap-6 mb-3">
           <div className="text-center">
             <p className="text-xs text-gray-500 mb-1">{match.teamA.name}</p>
             <div className="bg-blue-50 border-2 border-blue-600 rounded-lg px-4 py-2">
@@ -86,6 +90,7 @@ export function Scoreboard({
           </div>
         </div>
 
+
         {/* Badges and Controls */}
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
@@ -99,7 +104,7 @@ export function Scoreboard({
           <div className="flex gap-2">
             <Button
               onClick={() => onToggleTimer(true)}
-              disabled={isTimerRunning}
+              disabled={isTimerRunning || timer >= maxTimerDuration} // Disable if timer reached max
               size="sm"
               className="bg-green-600 hover:bg-green-700 h-9"
             >
@@ -113,6 +118,16 @@ export function Scoreboard({
             >
               <Pause className="w-4 h-4 mr-1" /> Pause
             </Button>
+            {/* --- NEW RESET BUTTON --- */}
+            <Button
+              onClick={onResetTimer}
+              variant="outline"
+              size="sm"
+              className="h-9 border-gray-400 text-gray-600 hover:bg-gray-100"
+            >
+              <RotateCcw className="w-4 h-4 mr-1" /> Reset
+            </Button>
+            {/* --- END NEW BUTTON --- */}
             <Button
               onClick={onUndo}
               variant="outline"

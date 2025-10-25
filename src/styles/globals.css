@@ -1,3 +1,6 @@
+
+@import "react-day-picker/dist/style.css";
+
 @layer base {
   :root {
     --font-size: 16px;
@@ -166,4 +169,3 @@ html {
     transform: translateY(0);
   }
 }
-@import "react-day-picker/dist/style.css";

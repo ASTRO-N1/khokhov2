@@ -139,6 +139,7 @@ export function LiveScoringV4({
     isDefender: boolean;
   } | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
+  const [isConfirming, setIsConfirming] = useState(false);
 
   const [currentDefendingTeam, setCurrentDefendingTeam] = useState<"A" | "B">(
     (setupData.tossWinner === "A" && setupData.tossDecision === "defend") ||
@@ -369,10 +370,12 @@ export function LiveScoringV4({
   };
 
   const handleOut = () => {
-    if (!isTimerRunning) {
-      toast.error("Please start the timer before recording an action.");
-      return;
+    if (isConfirming) {
+      toast.info("Processing previous action...");
+      return; // Already processing, do nothing
     }
+    setIsConfirming(true); // Set confirming state immediately
+    // --- END NEW ---
     if (selectedSymbol === "yellow-card" || selectedSymbol === "red-card") {
       setPendingCardAction({
         symbol: selectedSymbol,
@@ -386,75 +389,86 @@ export function LiveScoringV4({
   };
 
   const confirmOut = async () => {
-    const symbolData = SYMBOLS.find((s) => s.type === selectedSymbol);
-    if (!symbolData) return;
-
-    if (symbolData.singlePlayer) {
-      if ((!selectedDefender && !selectedAttacker) || !selectedSymbol) {
-        toast.error("Please select a player and a symbol for this action.");
-        return;
-      }
-    } else {
-      if (!selectedDefender || !selectedAttacker || !selectedSymbol) {
-        toast.error(
-          "Please select Defender → Attacker → Symbol before confirming."
-        );
-        return;
-      }
+    if (isConfirming) {
+      return; // Prevent multiple submissions while one is processing
     }
+    try {
+      const symbolData = SYMBOLS.find((s) => s.type === selectedSymbol);
+      if (!symbolData) return;
 
-    const currentTurnActions = actions.filter(
-      (a) => a.inning === currentInning && a.turn === currentTurn
-    );
-    const lastActionTime =
-      currentTurnActions.length > 0
-        ? currentTurnActions[currentTurnActions.length - 1].run_time
-        : 0;
-    const perTime = timer - lastActionTime;
-    const scoring_team_id =
-      currentDefendingTeam === "A" ? match.teamB.id : match.teamA.id;
-
-    const newActionData = {
-      match_id: match.id,
-      inning: currentInning,
-      turn: currentTurn,
-      scoring_team_id,
-      defender_jersey: selectedDefender?.jerseyNumber || null,
-      defender_name: selectedDefender?.name || null,
-      attacker_jersey: selectedAttacker?.jerseyNumber || null,
-      attacker_name: selectedAttacker?.name || null,
-      symbol: selectedSymbol,
-      action_type: "out",
-      points: symbolData.points,
-      run_time: timer,
-      per_time: perTime,
-      user_id: userId,
-    };
-
-    const { error } = await supabase
-      .from("scoring_actions")
-      .insert([newActionData]);
-
-    if (error) {
-      toast.error("Failed to save action: " + error.message);
-    } else {
-      toast.success(
-        `${
-          selectedDefender ? selectedDefender.name : selectedAttacker?.name
-        } recorded as OUT!`
-      );
-      const newTotalOutsThisTurn = currentTurnActions.length + 1;
-      const numDefendersInBatch = defenders.length;
-      if (
-        numDefendersInBatch > 0 &&
-        newTotalOutsThisTurn % numDefendersInBatch === 0
-      ) {
-        toast.info("All defenders out! New batch is now active.", {
-          duration: 4000,
-        });
+      if (symbolData.singlePlayer) {
+        if ((!selectedDefender && !selectedAttacker) || !selectedSymbol) {
+          toast.error("Please select a player and a symbol for this action.");
+          return;
+        }
+      } else {
+        if (!selectedDefender || !selectedAttacker || !selectedSymbol) {
+          toast.error(
+            "Please select Defender → Attacker → Symbol before confirming."
+          );
+          return;
+        }
       }
-      setSelectedDefender(null);
-      setSelectedSymbol(null);
+
+      const currentTurnActions = actions.filter(
+        (a) => a.inning === currentInning && a.turn === currentTurn
+      );
+      const lastActionTime =
+        currentTurnActions.length > 0
+          ? currentTurnActions[currentTurnActions.length - 1].run_time
+          : 0;
+      const perTime = timer - lastActionTime;
+      const scoring_team_id =
+        currentDefendingTeam === "A" ? match.teamB.id : match.teamA.id;
+
+      const newActionData = {
+        match_id: match.id,
+        inning: currentInning,
+        turn: currentTurn,
+        scoring_team_id,
+        defender_jersey: selectedDefender?.jerseyNumber || null,
+        defender_name: selectedDefender?.name || null,
+        attacker_jersey: selectedAttacker?.jerseyNumber || null,
+        attacker_name: selectedAttacker?.name || null,
+        symbol: selectedSymbol,
+        action_type: "out",
+        points: symbolData.points,
+        run_time: timer,
+        per_time: perTime,
+        user_id: userId,
+      };
+
+      const { error } = await supabase
+        .from("scoring_actions")
+        .insert([newActionData]);
+
+      if (error) {
+        toast.error("Failed to save action: " + error.message);
+      } else {
+        toast.success(
+          `${
+            selectedDefender ? selectedDefender.name : selectedAttacker?.name
+          } recorded as OUT!`
+        );
+        const newTotalOutsThisTurn = currentTurnActions.length + 1;
+        const numDefendersInBatch = defenders.length;
+        if (
+          numDefendersInBatch > 0 &&
+          newTotalOutsThisTurn % numDefendersInBatch === 0
+        ) {
+          toast.info("All defenders out! New batch is now active.", {
+            duration: 4000,
+          });
+        }
+        setSelectedDefender(null);
+        setSelectedSymbol(null);
+      }
+    } catch (err) {
+      console.error("Error during confirmOut:", err);
+      toast.error("An unexpected error occurred while saving the action.");
+    } finally {
+      // --- THIS MUST BE HERE ---
+      setIsConfirming(false);
     }
   };
 
@@ -907,6 +921,7 @@ export function LiveScoringV4({
                 <Button
                   onClick={handleOut}
                   disabled={
+                    isConfirming ||
                     !isTimerRunning ||
                     !selectedSymbol ||
                     (!SYMBOLS.find((s) => s.type === selectedSymbol)
@@ -915,7 +930,7 @@ export function LiveScoringV4({
                   }
                   className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 h-12 shadow-lg transition-all"
                 >
-                  Confirm
+                  {isConfirming ? "Confirming..." : "Confirm"}
                 </Button>
                 {SYMBOLS.some((s) => s.singlePlayer) && (
                   <p className="text-[10px] text-gray-500 text-center mt-1">

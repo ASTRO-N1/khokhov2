@@ -11,7 +11,14 @@ import { Card, CardContent, CardHeader } from "./components/ui/card";
 import { Input } from "./components/ui/input";
 import { Button } from "./components/ui/button";
 import { Label } from "./components/ui/label";
-import { User, Lock, AlertCircle, SquareFunction } from "lucide-react";
+import {
+  User,
+  Lock,
+  AlertCircle,
+  SquareFunction,
+  Eye,
+  EyeOff,
+} from "lucide-react";
 import { AdminLayout } from "./components/AdminLayout";
 import { ScorerLayout } from "./components/ScorerLayout";
 import { Toaster } from "./components/ui/sonner";
@@ -684,6 +691,7 @@ export default function App() {
 }
 
 // --- Extracted Login Page Component ---
+// --- Extracted Login Page Component ---
 function LoginPage({
   email,
   setEmail,
@@ -699,14 +707,17 @@ function LoginPage({
   error: string | null;
   handleLogin: (e: React.FormEvent) => Promise<void>;
 }) {
+  // --- NEW: State for password visibility ---
+  const [showPassword, setShowPassword] = useState(false);
+
+  // --- NEW: Function to toggle password visibility ---
+  const togglePasswordVisibility = () => {
+    setShowPassword((prev) => !prev);
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-white relative overflow-hidden">
-      <div className="absolute inset-0 opacity-5">
-        <div className="absolute top-20 left-20 w-32 h-32 rounded-full border-4 border-blue-600"></div>
-        <div className="absolute top-40 right-32 w-24 h-24 rounded-full border-4 border-blue-600"></div>
-        <div className="absolute bottom-32 left-1/4 w-20 h-20 rounded-full border-4 border-blue-600"></div>
-        <div className="absolute bottom-20 right-20 w-28 h-28 rounded-full border-4 border-blue-600"></div>
-      </div>
+      {/* ... (background elements) */}
       <div className="relative min-h-screen flex flex-col items-center justify-center p-4 md:p-8">
         <div className="mb-8 flex items-center justify-center">
           <div className="w-20 h-20 bg-blue-600 rounded-xl flex items-center justify-center text-white">
@@ -733,7 +744,7 @@ function LoginPage({
                   Email
                 </Label>
                 <div className="relative">
-                  <User className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                  <User className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5 pointer-events-none" />
                   <Input
                     id="email"
                     type="email"
@@ -750,16 +761,35 @@ function LoginPage({
                   Password
                 </Label>
                 <div className="relative">
-                  <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+                  <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5 pointer-events-none" />
                   <Input
                     id="password"
-                    type="password"
+                    // --- UPDATED: Use state to determine type ---
+                    type={showPassword ? "text" : "password"}
                     placeholder="Enter your password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="pl-10 h-12 bg-white border-gray-200 focus:border-blue-600 focus:ring-blue-600"
+                    // --- UPDATED: Add padding for the button ---
+                    className="pl-10 pr-10 h-12 bg-white border-gray-200 focus:border-blue-600 focus:ring-blue-600"
                     required
                   />
+                  {/* --- NEW: Toggle Button --- */}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="absolute right-2 top-1/2 transform -translate-y-1/2 h-8 w-8 text-gray-500 hover:text-gray-700"
+                    onClick={togglePasswordVisibility}
+                    aria-label={
+                      showPassword ? "Hide password" : "Show password"
+                    }
+                  >
+                    {showPassword ? (
+                      <EyeOff className="w-5 h-5" />
+                    ) : (
+                      <Eye className="w-5 h-5" />
+                    )}
+                  </Button>
                 </div>
               </div>
               <Button

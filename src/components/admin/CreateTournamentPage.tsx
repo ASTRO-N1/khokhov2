@@ -445,39 +445,6 @@ export function CreateTournamentPage({
                 </div>
               </div>
 
-              <div className="grid md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="playingPlayers">Playing Players</Label>
-                  <Select
-                    value={formData.playing_players}
-                    onValueChange={(value) =>
-                      setFormData({ ...formData, playing_players: value })
-                    }
-                  >
-                    <SelectTrigger
-                      id="playingPlayers"
-                      className="border-gray-300 rounded-lg h-10"
-                    >
-                      <SelectValue placeholder="Select playing players" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="7">7 Players</SelectItem>
-                      <SelectItem value="9">9 Players</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="substitutePlayers">Substitute Players</Label>
-                  <div className="h-10 px-3 py-2 bg-gradient-to-r from-gray-50 to-gray-100 border border-gray-300 rounded-lg flex items-center text-gray-700">
-                    <Users className="w-4 h-4 mr-2 text-gray-500" />
-                    <span className="font-medium">{substitutePlayers}</span>
-                    <span className="ml-1 text-gray-500 text-sm">
-                      Players (Auto-calculated)
-                    </span>
-                  </div>
-                </div>
-              </div>
-
               <div className="flex gap-3 pt-4">
                 <Button
                   type="submit"

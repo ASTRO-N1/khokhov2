@@ -10,10 +10,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
-import { ArrowLeft, Calendar, MapPin, Hash } from "lucide-react";
+import {
+  ArrowLeft,
+  Calendar as CalendarIcon,
+  MapPin,
+  Hash,
+} from "lucide-react"; // Renamed icon
 import { toast } from "sonner";
 import { supabase } from "../../supabaseClient";
 import { Tournament, Team } from "../../types";
+import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover"; // Import Popover
+import { Calendar } from "../ui/calendar"; // Import Calendar
+import { cn } from "../ui/utils"; // Import cn
+import { format, parseISO } from "date-fns"; // Import date-fns
 
 interface CreateMatchPageProps {
   onBack?: () => void;
@@ -25,10 +34,14 @@ export function CreateMatchPage({ onBack }: CreateMatchPageProps) {
     match_number: "",
     team_a_id: "",
     team_b_id: "",
-    matchDate: "",
+    matchDate: "", // Keep this to store the string YYYY-MM-DD
     matchTime: "",
     venue: "",
   });
+  // New state for the Date object used by the Calendar component
+  const [matchDateObj, setMatchDateObj] = useState<Date | undefined>(undefined);
+  const [isDatePickerOpen, setIsDatePickerOpen] = useState(false); // State for popover
+
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [allTeams, setAllTeams] = useState<Team[]>([]);
   const [filteredTeams, setFilteredTeams] = useState<Team[]>([]);
@@ -36,6 +49,7 @@ export function CreateMatchPage({ onBack }: CreateMatchPageProps) {
 
   useEffect(() => {
     const fetchData = async () => {
+      // ... fetch tournaments and teams (no changes here) ...
       const { data: tournamentsData, error: tournamentsError } = await supabase
         .from("tournaments")
         .select("id, name");
@@ -44,7 +58,7 @@ export function CreateMatchPage({ onBack }: CreateMatchPageProps) {
 
       const { data: teamsData, error: teamsError } = await supabase
         .from("teams")
-        .select("id, name, tournament_id");
+        .select("id, name, tournament_id"); // Make sure tournament_id is selected
       if (teamsData) setAllTeams(teamsData as Team[]);
       if (teamsError) toast.error("Failed to fetch teams.");
     };
@@ -53,6 +67,7 @@ export function CreateMatchPage({ onBack }: CreateMatchPageProps) {
 
   useEffect(() => {
     if (formData.tournament_id) {
+      // Ensure team type includes tournament_id or adjust casting
       setFilteredTeams(
         allTeams.filter(
           (team) => (team as any).tournament_id === formData.tournament_id
@@ -64,19 +79,32 @@ export function CreateMatchPage({ onBack }: CreateMatchPageProps) {
     }
   }, [formData.tournament_id, allTeams]);
 
+  // Handler for when a date is selected in the calendar
+  const handleMatchDateSelect = (date: Date | undefined) => {
+    if (date) {
+      setMatchDateObj(date);
+      setFormData({ ...formData, matchDate: format(date, "yyyy-MM-dd") });
+      setIsDatePickerOpen(false); // Close popover on select
+    } else {
+      setMatchDateObj(undefined);
+      setFormData({ ...formData, matchDate: "" });
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (
       !formData.tournament_id ||
       !formData.team_a_id ||
       !formData.team_b_id ||
-      !formData.matchDate ||
+      !formData.matchDate || // Check the string date
       !formData.matchTime ||
       !formData.venue
     ) {
       toast.error("Please fill out all required fields.");
       return;
     }
+    // ... rest of handleSubmit (no changes needed here) ...
     if (formData.team_a_id === formData.team_b_id) {
       toast.error("Team A and Team B cannot be the same.");
       return;
@@ -93,7 +121,7 @@ export function CreateMatchPage({ onBack }: CreateMatchPageProps) {
     }
 
     const matchDateTime = new Date(
-      `${formData.matchDate}T${formData.matchTime}`
+      `${formData.matchDate}T${formData.matchTime}` // Use formData.matchDate string
     ).toISOString();
 
     const { error } = await supabase.from("matches").insert({
@@ -113,6 +141,7 @@ export function CreateMatchPage({ onBack }: CreateMatchPageProps) {
     } else {
       toast.success("Match created successfully!");
       setFormData({
+        // Reset form
         tournament_id: "",
         match_number: "",
         team_a_id: "",
@@ -121,6 +150,7 @@ export function CreateMatchPage({ onBack }: CreateMatchPageProps) {
         matchTime: "",
         venue: "",
       });
+      setMatchDateObj(undefined); // Reset calendar date object
     }
   };
 
@@ -137,6 +167,7 @@ export function CreateMatchPage({ onBack }: CreateMatchPageProps) {
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="grid md:grid-cols-2 gap-4">
+              {/* Tournament Select (no changes) */}
               <div className="space-y-2">
                 <Label htmlFor="tournament">Tournament *</Label>
                 <Select
@@ -160,6 +191,7 @@ export function CreateMatchPage({ onBack }: CreateMatchPageProps) {
                   </SelectContent>
                 </Select>
               </div>
+              {/* Match Number Input (no changes) */}
               <div className="space-y-2">
                 <Label htmlFor="matchNumber">Match Number (e.g., M001)</Label>
                 <div className="relative">
@@ -176,6 +208,7 @@ export function CreateMatchPage({ onBack }: CreateMatchPageProps) {
                 </div>
               </div>
             </div>
+            {/* Team Selects (no changes) */}
             <div className="grid md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="teamA">Team A *</Label>
@@ -228,22 +261,39 @@ export function CreateMatchPage({ onBack }: CreateMatchPageProps) {
                 </Select>
               </div>
             </div>
+            {/* --- UPDATED DATE & TIME PICKERS --- */}
             <div className="grid md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="matchDate">Match Date *</Label>
-                <div className="relative">
-                  <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-                  <Input
-                    id="matchDate"
-                    type="date"
-                    value={formData.matchDate}
-                    onChange={(e) =>
-                      setFormData({ ...formData, matchDate: e.target.value })
-                    }
-                    className="pl-10 border-gray-300 rounded-lg"
-                    required
-                  />
-                </div>
+                <Popover
+                  open={isDatePickerOpen}
+                  onOpenChange={setIsDatePickerOpen}
+                >
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant={"outline"}
+                      className={cn(
+                        "w-full h-10 justify-start text-left font-normal border-gray-300 rounded-lg",
+                        !matchDateObj && "text-muted-foreground"
+                      )}
+                    >
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {matchDateObj ? (
+                        format(matchDateObj, "PPP")
+                      ) : (
+                        <span>Pick a date</span>
+                      )}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0">
+                    <Calendar
+                      mode="single"
+                      selected={matchDateObj}
+                      onSelect={handleMatchDateSelect}
+                      initialFocus
+                    />
+                  </PopoverContent>
+                </Popover>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="matchTime">Match Time *</Label>
@@ -254,11 +304,14 @@ export function CreateMatchPage({ onBack }: CreateMatchPageProps) {
                   onChange={(e) =>
                     setFormData({ ...formData, matchTime: e.target.value })
                   }
-                  className="border-gray-300 rounded-lg"
+                  className="border-gray-300 rounded-lg h-10"
                   required
                 />
               </div>
             </div>
+            {/* --- END OF UPDATES --- */}
+
+            {/* Venue Input (no changes) */}
             <div className="space-y-2">
               <Label htmlFor="ground">Ground / Venue *</Label>
               <div className="relative">
@@ -275,6 +328,7 @@ export function CreateMatchPage({ onBack }: CreateMatchPageProps) {
                 />
               </div>
             </div>
+            {/* Buttons (no changes) */}
             <div className="flex gap-3 pt-4">
               <Button
                 type="submit"

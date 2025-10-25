@@ -291,6 +291,13 @@ export function LiveScoringV4({
   const handleToggleTimer = useCallback((run: boolean) => {
     setIsTimerRunning(run);
   }, []);
+  const handleResetTimer = useCallback(() => {
+    if (confirm("Are you sure you want to reset the timer to 00:00?")) {
+      setTimer(0);
+      setIsTimerRunning(false); // Optionally pause the timer on reset
+      toast.info("Timer reset.");
+    }
+  }, []);
 
   const handleDefenderSelect = (defender: Player) => {
     setSelectedDefender((prev) => (prev?.id === defender.id ? null : defender));
@@ -695,6 +702,7 @@ export function LiveScoringV4({
           onUndo={handleUndoLastAction}
           onNextTurn={handleNextTurn}
           onEndMatch={handleEndMatch}
+          onResetTimer={handleResetTimer}
         />
 
         <div className="max-w-7xl mx-auto px-4 lg:px-6 py-4 space-y-4">

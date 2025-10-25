@@ -51,7 +51,7 @@ export function MatchSetupEnhanced({
   // Start directly at team-a selection
   const [step, setStep] = useState<"team-a" | "team-b" | "preview">("team-a");
   // Default playersPerTeam to 7, or fetch/pass from tournament settings if available
-  const [playersPerTeam] = useState<7 | 9>(match.playersPerTeam || 7);
+  const [playersPerTeam] = useState<7 | 9>(match.playersPerTeam || 9);
   const [teamASelected, setTeamASelected] = useState<string[]>([]);
   const [teamBSelected, setTeamBSelected] = useState<string[]>([]);
   const [tossWinner, setTossWinner] = useState<"A" | "B">("A");
@@ -275,14 +275,6 @@ export function MatchSetupEnhanced({
           <div className="relative overflow-hidden rounded-lg bg-gradient-to-r from-red-600 to-pink-600 p-6 shadow-lg">
             {" "}
             {/* Changed Color */}
-            <Button
-              variant="ghost"
-              onClick={handleBackStep}
-              className="absolute top-4 left-4 text-white hover:bg-white/20"
-            >
-              <ArrowLeft className="w-4 h-4 mr-2" />
-              Back
-            </Button>
             <div className="absolute right-0 top-0 bottom-0 flex items-center pr-6 opacity-10">
               <Shield className="w-32 h-32 text-white" />
             </div>
@@ -411,14 +403,6 @@ export function MatchSetupEnhanced({
     <div className="min-h-screen bg-gray-50 p-4 lg:p-8">
       <div className="space-y-6 max-w-6xl mx-auto">
         <div className="relative overflow-hidden rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 p-6 shadow-lg">
-          <Button
-            variant="ghost"
-            onClick={handleBackStep}
-            className="absolute top-4 left-4 text-white hover:bg-white/20"
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back
-          </Button>
           <div className="absolute right-0 top-0 bottom-0 flex items-center pr-6 opacity-10">
             <Trophy className="w-32 h-32 text-white" />
           </div>

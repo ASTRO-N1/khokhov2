@@ -22,6 +22,9 @@ import { supabase } from "../../supabaseClient";
 import { Scoreboard } from "./Scoreboard";
 import { Scoresheet } from "./Scoresheet";
 
+const TURN_BREAK_DURATION = 180; // 3 minutes in seconds
+const INNING_BREAK_DURATION = 300; // 5 minutes in seconds
+
 interface LiveScoringV4Props {
   match: Match;
   setupData: MatchSetupData;
@@ -140,6 +143,10 @@ export function LiveScoringV4({
   } | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [isConfirming, setIsConfirming] = useState(false);
+
+  const [isOnBreak, setIsOnBreak] = useState(false);
+  const [breakTimer, setBreakTimer] = useState(0);
+  const [breakType, setBreakType] = useState<"turn" | "inning" | null>(null);
 
   const [currentDefendingTeam, setCurrentDefendingTeam] = useState<"A" | "B">(
     (setupData.tossWinner === "A" && setupData.tossDecision === "defend") ||
@@ -260,9 +267,12 @@ export function LiveScoringV4({
     };
   }, [match.id]);
 
+  // --- Match Timer useEffect (MODIFIED) ---
   useEffect(() => {
     let interval: NodeJS.Timeout;
-    if (isTimerRunning && timer < maxTimerDuration) {
+    // Only run match timer if NOT on break
+    if (!isOnBreak && isTimerRunning && timer < maxTimerDuration) {
+      // <-- Added !isOnBreak check
       interval = setInterval(() => {
         setTimer((prev) => {
           const newTime = prev + 1;
@@ -271,6 +281,8 @@ export function LiveScoringV4({
             toast.warning("⏰ Turn Over! Time limit reached", {
               duration: 3000,
             });
+            // Optionally trigger next turn/break automatically here
+            // handleNextTurn();
             return maxTimerDuration;
           }
           return newTime;
@@ -278,7 +290,65 @@ export function LiveScoringV4({
       }, 1000);
     }
     return () => clearInterval(interval);
-  }, [isTimerRunning, timer, maxTimerDuration]);
+  }, [isTimerRunning, timer, maxTimerDuration, isOnBreak]); // <-- Added isOnBreak dependency
+  // --- NEW: Function to actually perform state updates for next turn/inning ---
+  const startNextTurnActual = useCallback(() => {
+    setIsOnBreak(false); // End break mode
+    setBreakTimer(0);
+    setBreakType(null);
+
+    const newTurn = currentTurn + 1;
+    let newInning = currentInning;
+
+    // Check if it's the start of a new inning (after turn 2, 4, etc.)
+    if (currentTurn % 2 === 0) {
+      newInning = currentInning + 1;
+      setCurrentInning(newInning);
+      toast.success(
+        `Inning ${currentInning} Over! Starting Inning ${newInning}, Turn ${newTurn}.`
+      );
+    } else {
+      toast.success(`Turn ${newTurn} started.`);
+    }
+
+    setCurrentTurn(newTurn);
+    setTimer(0); // Reset MATCH timer for the new turn
+    setIsTimerRunning(false); // Start paused
+    setCurrentDefendingTeam(currentDefendingTeam === "A" ? "B" : "A");
+    setSelectedDefender(null);
+    setSelectedAttacker(null);
+    setSelectedSymbol(null);
+  }, [currentInning, currentTurn, currentDefendingTeam]); // Dependencies
+
+  // --- NEW: Break Timer useEffect ---
+  useEffect(() => {
+    let breakInterval: NodeJS.Timeout | null = null; // Initialize as null
+
+    if (isOnBreak && breakTimer > 0) {
+      breakInterval = setInterval(() => {
+        setBreakTimer((prev) => {
+          const newTime = prev - 1;
+          if (newTime <= 0) {
+            // Call the function directly here when the timer hits 0
+            startNextTurnActual();
+            // Clear the interval inside the setter to ensure it stops
+            if (breakInterval) clearInterval(breakInterval);
+            return 0;
+          }
+          return newTime;
+        });
+      }, 1000);
+    } else if (breakInterval) {
+      // Clear interval if break ends prematurely (e.g., skip) or timer reaches 0 outside setter
+      clearInterval(breakInterval);
+    }
+
+    // Cleanup function
+    return () => {
+      if (breakInterval) clearInterval(breakInterval);
+    };
+    // Keep startNextTurnActual here, but the direct call inside avoids stale closure issues.
+  }, [isOnBreak, breakTimer, startNextTurnActual]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -288,16 +358,23 @@ export function LiveScoringV4({
       .padStart(2, "0")}`;
   };
 
-  const handleToggleTimer = useCallback((run: boolean) => {
-    setIsTimerRunning(run);
-  }, []);
+  const handleToggleTimer = useCallback(
+    (run: boolean) => {
+      if (isOnBreak) {
+        toast.info("Cannot control match timer during a break.");
+        return;
+      }
+      setIsTimerRunning(run);
+    },
+    [isOnBreak]
+  );
   const handleResetTimer = useCallback(() => {
     if (confirm("Are you sure you want to reset the timer to 00:00?")) {
       setTimer(0);
       setIsTimerRunning(false); // Optionally pause the timer on reset
       toast.info("Timer reset.");
     }
-  }, []);
+  }, [isOnBreak]);
 
   const handleDefenderSelect = (defender: Player) => {
     setSelectedDefender((prev) => (prev?.id === defender.id ? null : defender));
@@ -332,7 +409,7 @@ export function LiveScoringV4({
   };
 
   const handleSubstituteClick = () => {
-    if (!isTimerRunning) {
+    if (!isTimerRunning || isOnBreak) {
       toast.error("Start the timer before making a substitution.");
       return;
     }
@@ -380,6 +457,11 @@ export function LiveScoringV4({
     if (isConfirming) {
       toast.info("Processing previous action...");
       return; // Already processing, do nothing
+    }
+    if (isOnBreak) {
+      // Added check
+      toast.error("Cannot score during a break.");
+      return;
     }
     setIsConfirming(true); // Set confirming state immediately
     // --- END NEW ---
@@ -514,30 +596,44 @@ export function LiveScoringV4({
     return { teamA: teamAScore, teamB: teamBScore };
   }, [actions, match.teamA.id, match.teamB.id]);
 
+  // --- NEW: Function to skip the break ---
+  const handleSkipBreak = () => {
+    if (!isOnBreak) return;
+    if (confirm("Are you sure you want to skip the remaining break time?")) {
+      setBreakTimer(0); // Set timer to 0 to trigger the useEffect cleanup
+      startNextTurnActual(); // Immediately start the next turn
+    }
+  };
+
   const handleNextTurn = () => {
-    if (confirm(`End Turn ${currentTurn} and start Turn ${currentTurn + 1}?`)) {
-      const newTurn = currentTurn + 1;
-      let newInning = currentInning;
-      if (newTurn > 2 && newTurn % 2 === 1) {
-        newInning = currentInning + 1;
-        setCurrentInning(newInning);
-        toast.success(
-          `Inning ${currentInning} Over! Starting Inning ${newInning}, Turn ${newTurn}.`
+    if (isOnBreak) return; // Don't allow triggering next turn during a break
+
+    if (confirm(`End Turn ${currentTurn} and start the break?`)) {
+      setIsTimerRunning(false); // Pause match timer
+
+      if (currentTurn % 2 === 0) {
+        // End of an inning (after turn 2, 4, 6...)
+        setBreakType("inning");
+        setBreakTimer(INNING_BREAK_DURATION);
+        toast.info(
+          `Inning ${currentInning} finished. Starting 5-minute break.`
         );
       } else {
-        toast.success(`Turn ${newTurn} started.`);
+        // End of a regular turn (after turn 1, 3, 5...)
+        setBreakType("turn");
+        setBreakTimer(TURN_BREAK_DURATION);
+        toast.info(`Turn ${currentTurn} finished. Starting 3-minute break.`);
       }
-      setCurrentTurn(newTurn);
-      setTimer(0);
-      setIsTimerRunning(false);
-      setCurrentDefendingTeam(currentDefendingTeam === "A" ? "B" : "A");
-      setSelectedDefender(null);
-      setSelectedAttacker(null);
-      setSelectedSymbol(null);
+      setIsOnBreak(true); // Start break mode
     }
   };
 
   const handleEndMatch = () => {
+    if (isOnBreak) {
+      // Added check
+      toast.error("Cannot end the match during a break.");
+      return;
+    }
     if (currentTurn < 2 && currentInning === 1) {
       toast.error(
         "At least one full inning (2 turns) must be completed before ending the match."
@@ -703,6 +799,10 @@ export function LiveScoringV4({
           onNextTurn={handleNextTurn}
           onEndMatch={handleEndMatch}
           onResetTimer={handleResetTimer}
+          isOnBreak={isOnBreak}
+          breakTimer={breakTimer}
+          breakType={breakType}
+          onSkipBreak={handleSkipBreak}
         />
 
         <div className="max-w-7xl mx-auto px-4 lg:px-6 py-4 space-y-4">

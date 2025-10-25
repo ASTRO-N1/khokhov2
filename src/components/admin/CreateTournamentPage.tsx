@@ -10,9 +10,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
-import { Calendar, ArrowLeft, Users } from "lucide-react";
-import { toast } from "sonner@2.0.3";
+import { Calendar as CalendarIcon, ArrowLeft, Users } from "lucide-react"; // Renamed Calendar icon import
+import { toast } from "sonner";
 import { supabase } from "../../supabaseClient";
+import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover"; // Import Popover components
+import { Calendar } from "../ui/calendar"; // Import Calendar component
+import { cn } from "../ui/utils"; // Import cn utility
+import { format, parseISO } from "date-fns"; // Import date-fns functions
 
 interface CreateTournamentPageProps {
   tournamentId?: string; // Make tournamentId an optional prop
@@ -40,6 +44,11 @@ export function CreateTournamentPage({
   });
   const [loading, setLoading] = useState(false);
   const isEditMode = !!tournamentId;
+  const [startDate, setStartDate] = useState<Date | undefined>(undefined);
+  const [endDate, setEndDate] = useState<Date | undefined>(undefined);
+  // Add state for popover open/close
+  const [isStartDatePickerOpen, setIsStartDatePickerOpen] = useState(false);
+  const [isEndDatePickerOpen, setIsEndDatePickerOpen] = useState(false);
 
   useEffect(() => {
     if (isEditMode) {
@@ -67,6 +76,24 @@ export function CreateTournamentPage({
             organizer_name: data.organizer_name || "",
             playing_players: data.playing_players?.toString() || "7",
           });
+          // Set initial dates for the calendar pickers if they exist
+          if (data.start_date) {
+            try {
+              setStartDate(parseISO(data.start_date));
+            } catch (e) {
+              console.error("Error parsing start date:", data.start_date, e);
+              // Optionally set to undefined or show an error
+              setStartDate(undefined);
+            }
+          }
+          if (data.end_date) {
+            try {
+              setEndDate(parseISO(data.end_date));
+            } catch (e) {
+              console.error("Error parsing end date:", data.end_date, e);
+              setEndDate(undefined);
+            }
+          }
         }
         setLoading(false);
       };
@@ -76,8 +103,41 @@ export function CreateTournamentPage({
 
   const substitutePlayers = 15 - parseInt(formData.playing_players || "7");
 
+  // Updated handler
+  const handleStartDateSelect = (date: Date | undefined) => {
+    if (date) {
+      setStartDate(date);
+      setFormData({ ...formData, start_date: format(date, "yyyy-MM-dd") });
+      // Ensure end date is not before start date
+      if (endDate && date > endDate) {
+        setEndDate(date);
+        setFormData({ ...formData, end_date: format(date, "yyyy-MM-dd") });
+      }
+      setIsStartDatePickerOpen(false); // Close the popover
+    } else {
+      setStartDate(undefined);
+      setFormData({ ...formData, start_date: "" });
+    }
+  };
+
+  // Updated handler
+  const handleEndDateSelect = (date: Date | undefined) => {
+    if (date) {
+      setEndDate(date);
+      setFormData({ ...formData, end_date: format(date, "yyyy-MM-dd") });
+      setIsEndDatePickerOpen(false); // Close the popover
+    } else {
+      setEndDate(undefined);
+      setFormData({ ...formData, end_date: "" });
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!formData.start_date || !formData.end_date) {
+      toast.error("Please select both a start and end date.");
+      return;
+    }
     setLoading(true);
 
     const {
@@ -112,14 +172,12 @@ export function CreateTournamentPage({
 
     let error;
     if (isEditMode) {
-      // Update existing record
       const { error: updateError } = await supabase
         .from("tournaments")
         .update(submissionData)
         .eq("id", tournamentId);
       error = updateError;
     } else {
-      // Insert new record
       const { error: insertError } = await supabase
         .from("tournaments")
         .insert([submissionData]);
@@ -134,9 +192,7 @@ export function CreateTournamentPage({
       toast.success(
         `Tournament ${isEditMode ? "updated" : "created"} successfully!`
       );
-      if (onSuccess) {
-        onSuccess();
-      }
+      if (onSuccess) onSuccess();
     }
   };
 
@@ -279,46 +335,83 @@ export function CreateTournamentPage({
                     <SelectContent>
                       <SelectItem value="men">Men</SelectItem>
                       <SelectItem value="women">Women</SelectItem>
-                      <SelectItem value="menandwomen">Men And Women</SelectItem>
+                      <SelectItem value="boys">Boys</SelectItem>
+                      <SelectItem value="girls">Girls</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
               </div>
 
+              {/* --- UPDATED DATE PICKERS WITH POPOVER CONTROL --- */}
               <div className="grid md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="startDate">Start Date</Label>
-                  <div className="relative">
-                    <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-                    <Input
-                      id="startDate"
-                      type="date"
-                      value={formData.start_date}
-                      onChange={(e) =>
-                        setFormData({ ...formData, start_date: e.target.value })
-                      }
-                      className="pl-10 border-gray-300 rounded-lg h-10"
-                      required
-                    />
-                  </div>
+                  <Popover
+                    open={isStartDatePickerOpen}
+                    onOpenChange={setIsStartDatePickerOpen}
+                  >
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant={"outline"}
+                        className={cn(
+                          "w-full h-10 justify-start text-left font-normal border-gray-300 rounded-lg",
+                          !startDate && "text-muted-foreground"
+                        )}
+                      >
+                        <CalendarIcon className="mr-2 h-4 w-4" />
+                        {startDate ? (
+                          format(startDate, "PPP")
+                        ) : (
+                          <span>Pick a date</span>
+                        )}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0">
+                      <Calendar
+                        mode="single"
+                        selected={startDate}
+                        onSelect={handleStartDateSelect} // Use updated handler
+                        initialFocus
+                      />
+                    </PopoverContent>
+                  </Popover>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="endDate">End Date</Label>
-                  <div className="relative">
-                    <Calendar className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-                    <Input
-                      id="endDate"
-                      type="date"
-                      value={formData.end_date}
-                      onChange={(e) =>
-                        setFormData({ ...formData, end_date: e.target.value })
-                      }
-                      className="pl-10 border-gray-300 rounded-lg h-10"
-                      required
-                    />
-                  </div>
+                  <Popover
+                    open={isEndDatePickerOpen}
+                    onOpenChange={setIsEndDatePickerOpen}
+                  >
+                    <PopoverTrigger asChild>
+                      <Button
+                        variant={"outline"}
+                        className={cn(
+                          "w-full h-10 justify-start text-left font-normal border-gray-300 rounded-lg",
+                          !endDate && "text-muted-foreground"
+                        )}
+                        disabled={!startDate}
+                      >
+                        <CalendarIcon className="mr-2 h-4 w-4" />
+                        {endDate ? (
+                          format(endDate, "PPP")
+                        ) : (
+                          <span>Pick a date</span>
+                        )}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0">
+                      <Calendar
+                        mode="single"
+                        selected={endDate}
+                        onSelect={handleEndDateSelect} // Use updated handler
+                        disabled={{ before: startDate }}
+                        initialFocus
+                      />
+                    </PopoverContent>
+                  </Popover>
                 </div>
               </div>
+              {/* --- END OF UPDATED DATE PICKERS --- */}
 
               <div className="grid md:grid-cols-2 gap-4">
                 <div className="space-y-2">

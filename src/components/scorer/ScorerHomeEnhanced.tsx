@@ -16,6 +16,7 @@ import {
 import { Match, User as UserType, Player, Team } from "../../types";
 import { ViewResultModal } from "./ViewResultModal";
 import { supabase } from "../../supabaseClient";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
 interface ScorerHomeEnhancedProps {
@@ -27,6 +28,7 @@ export function ScorerHomeEnhanced({
   user,
   onStartMatch,
 }: ScorerHomeEnhancedProps) {
+  const navigate = useNavigate();
   const [matches, setMatches] = useState<Match[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedFinishedMatch, setSelectedFinishedMatch] =
@@ -225,7 +227,8 @@ export function ScorerHomeEnhanced({
             <Button
               variant="outline"
               className="w-full hover:bg-green-50 hover:text-green-700 hover:border-green-400 transition-all"
-              onClick={() => setSelectedFinishedMatch(match)}
+              // --- CORRECTED Scorer Route ---
+              onClick={() => navigate(`/scorer/results/match/${match.id}`)} // <-- Use scorer-specific path
             >
               <CheckCircle className="w-4 h-4 mr-2" />
               View Results

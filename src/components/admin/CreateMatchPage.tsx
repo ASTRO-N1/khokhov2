@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
+import MuiInputAdornment from "@mui/material/InputAdornment";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
+import { Clock } from "lucide-react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
@@ -23,7 +25,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover"; // Impo
 import { Calendar } from "../ui/calendar"; // Import Calendar
 import { cn } from "../ui/utils"; // Import cn
 import { format, parseISO } from "date-fns"; // Import date-fns
-
+import dayjs, { Dayjs } from "dayjs"; // Import Dayjs type
+import { MobileTimePicker } from "@mui/x-date-pickers/MobileTimePicker";
 interface CreateMatchPageProps {
   onBack?: () => void;
 }
@@ -39,6 +42,7 @@ export function CreateMatchPage({ onBack }: CreateMatchPageProps) {
     venue: "",
   });
   // New state for the Date object used by the Calendar component
+  const [matchTimeValue, setMatchTimeValue] = useState<Dayjs | null>(null);
   const [matchDateObj, setMatchDateObj] = useState<Date | undefined>(undefined);
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false); // State for popover
 
@@ -93,11 +97,13 @@ export function CreateMatchPage({ onBack }: CreateMatchPageProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const timeString = matchTimeValue ? matchTimeValue.format("HH:mm") : null;
     if (
       !formData.tournament_id ||
       !formData.team_a_id ||
       !formData.team_b_id ||
-      !formData.matchDate || // Check the string date
+      !formData.matchDate ||
+      !timeString || // Check the string date
       !formData.matchTime ||
       !formData.venue
     ) {
@@ -121,7 +127,7 @@ export function CreateMatchPage({ onBack }: CreateMatchPageProps) {
     }
 
     const matchDateTime = new Date(
-      `${formData.matchDate}T${formData.matchTime}` // Use formData.matchDate string
+      `${formData.matchDate}T${timeString}`
     ).toISOString();
 
     const { error } = await supabase.from("matches").insert({
@@ -150,7 +156,8 @@ export function CreateMatchPage({ onBack }: CreateMatchPageProps) {
         matchTime: "",
         venue: "",
       });
-      setMatchDateObj(undefined); // Reset calendar date object
+      setMatchDateObj(undefined);
+      setMatchTimeValue(null); // Reset calendar date object
     }
   };
 
@@ -295,17 +302,85 @@ export function CreateMatchPage({ onBack }: CreateMatchPageProps) {
                   </PopoverContent>
                 </Popover>
               </div>
+              {/* Time Picker - Corrected Again */}
               <div className="space-y-2">
                 <Label htmlFor="matchTime">Match Time *</Label>
-                <Input
-                  id="matchTime"
-                  type="time"
-                  value={formData.matchTime}
-                  onChange={(e) =>
-                    setFormData({ ...formData, matchTime: e.target.value })
-                  }
-                  className="border-gray-300 rounded-lg h-10"
-                  required
+                <MobileTimePicker
+                  value={matchTimeValue} // Main value prop expects Dayjs | null
+                  onChange={(newValue) => setMatchTimeValue(newValue)}
+                  ampm={true}
+                  label=""
+                  slotProps={{
+                    textField: {
+                      size: "small",
+                      fullWidth: true,
+                      required: true,
+                      inputProps: {
+                        readOnly: true,
+                        style: { cursor: "pointer" },
+                      },
+                      InputProps: {
+                        readOnly: true,
+                        startAdornment: (
+                          <MuiInputAdornment position="start">
+                            <Clock className="h-4 w-4 text-gray-500" />
+                          </MuiInputAdornment>
+                        ),
+                        onClick: (e) => {
+                          const button = (
+                            e.currentTarget as HTMLElement
+                          ).querySelector("button");
+                          button?.click();
+                        },
+                        style: { cursor: "pointer" },
+                      },
+                      // Use placeholder for the empty state text
+                      placeholder: "Pick a time",
+                      sx: {
+                        // Keep your styling
+                        "& .MuiInputBase-root": {
+                          cursor: "pointer",
+                          height: "40px",
+                          borderRadius: "0.375rem",
+                          backgroundColor: "var(--background)",
+                          borderColor: "var(--border)",
+                          color: matchTimeValue
+                            ? "var(--foreground)"
+                            : "var(--muted-foreground)", // Color logic still works
+                          boxShadow: "none",
+                          fontSize: "0.875rem",
+                          justifyContent: "flex-start",
+                          paddingLeft: "0.75rem",
+                          paddingRight: "0.75rem",
+                          "& .MuiInputAdornment-root": {
+                            marginRight: "8px",
+                            color: "var(--muted-foreground)",
+                          },
+                          "& input": {
+                            paddingLeft: 0,
+                            cursor: "pointer",
+                          },
+                        },
+                        "& .MuiOutlinedInput-notchedOutline": {
+                          borderColor: "var(--border)",
+                        },
+                        "&:hover .MuiInputBase-root": {
+                          // Apply hover bg to root
+                          backgroundColor: "var(--accent)",
+                        },
+                        "&.Mui-focused .MuiOutlinedInput-notchedOutline": {
+                          borderColor: "var(--ring)",
+                          borderWidth: "1px",
+                        },
+                      },
+                      // REMOVED explicit value prop here
+                    },
+                    dialog: {
+                      TransitionProps: {
+                        timeout: 500,
+                      },
+                    },
+                  }}
                 />
               </div>
             </div>

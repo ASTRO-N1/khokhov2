@@ -736,8 +736,11 @@ export function TurnByTurnResultView() {
       </div>
       {/* Consolidated Report Modal */}
       <Dialog open={showSummaryModal} onOpenChange={setShowSummaryModal}>
-        <DialogContent className="max-w-6xl max-h-[90vh] p-0 overflow-hidden">
-          {/* Render ConsolidatedReport only when setupData is available */}
+        {/* Apply max-height and overflow directly here */}
+        <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto p-0">
+          {" "}
+          {/* Changed overflow-hidden to overflow-y-auto */}
+          {/* Render ConsolidatedReport - It should handle its internal scroll if needed */}
           {reconstructedSetupData && match && (
             <ConsolidatedReport
               match={match}

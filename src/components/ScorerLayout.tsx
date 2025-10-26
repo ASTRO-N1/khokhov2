@@ -69,10 +69,7 @@ export function ScorerLayout({
       )}
 
       {/* Main Content */}
-      <main className={showHeader ? "p-4 lg:p-8 pb-20" : ""}>
-        {children}
-        <Toaster />
-      </main>
+      <main className={showHeader ? "p-4 lg:p-8 pb-20" : ""}>{children}</main>
     </div>
   );
 }

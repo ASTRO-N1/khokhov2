@@ -507,6 +507,13 @@ function ScorerRouter({
           }
         />
 
+        {/* --- ADD THIS NEW ROUTE --- */}
+        <Route
+          path="results/match/:matchId"
+          element={<TurnByTurnResultView />}
+        />
+        {/* --- END OF NEW ROUTE --- */}
+
         <Route path="/" element={<Navigate to="home" replace />} />
         <Route path="*" element={<Navigate to="home" replace />} />
       </Routes>

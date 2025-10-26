@@ -104,7 +104,6 @@ export function CreateMatchPage({ onBack }: CreateMatchPageProps) {
       !formData.team_b_id ||
       !formData.matchDate ||
       !timeString || // Check the string date
-      !formData.matchTime ||
       !formData.venue
     ) {
       toast.error("Please fill out all required fields.");

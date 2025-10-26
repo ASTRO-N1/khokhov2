@@ -45,7 +45,7 @@ import { mockMatches, mockTournaments, mockTeams } from "./utils/mockData";
 import { User as UserType, Match, Tournament, ScoringAction } from "./types";
 import { supabase } from "./supabaseClient";
 import { toast } from "sonner";
-
+import { TurnByTurnResultView } from "./components/TurnByTurnResultView";
 // --- Helper Wrappers for Routing ---
 
 // Renders the CreateTournamentPage (for both create and edit modes)
@@ -344,7 +344,6 @@ function AdminRouter({
     >
       <Routes>
         <Route path="home" element={<AdminHome />} />
-
         <Route path="tournaments" element={<TournamentsPage />} />
         <Route
           path="tournaments/create"
@@ -354,7 +353,6 @@ function AdminRouter({
           path="tournaments/edit/:tournamentId"
           element={<TournamentEditorWrapper />}
         />
-
         <Route path="matches" element={<MatchesPageEnhanced />} />
         <Route
           path="matches/create"
@@ -363,13 +361,10 @@ function AdminRouter({
           }
         />
         <Route path="matches/edit/:matchId" element={<MatchEditorWrapper />} />
-
         <Route path="teams" element={<TeamsPage />} />
         <Route path="teams/add" element={<AddTeamPage />} />
         <Route path="teams/edit/:teamId" element={<TeamEditorWrapper />} />
-
         <Route path="scorers" element={<ScorerManagementPage />} />
-
         <Route
           path="results"
           element={
@@ -378,13 +373,16 @@ function AdminRouter({
             ) : (
               <ResultsPage
                 matches={finishedMatches}
-                onViewResult={(id) => onNavigate(`/admin/results/${id}`)}
+                onViewResult={(id) => onNavigate(`/admin/results/match/${id}`)}
               />
             )
           }
         />
-        <Route path="results/:matchId" element={<MatchResultWrapper />} />
-
+        <Route
+          path="results/match/:matchId"
+          element={<TurnByTurnResultView />}
+        />{" "}
+        {/* <-- ADD THIS */}
         <Route path="/" element={<Navigate to="home" replace />} />
         <Route path="*" element={<Navigate to="home" replace />} />
       </Routes>

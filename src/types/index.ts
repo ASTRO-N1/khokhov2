@@ -63,7 +63,10 @@ export interface Match {
   scoreA?: number;
   scoreB?: number;
   innings?: number; // << ADDED or CONFIRMED
-  turnDuration?: number; // in seconds // << ADDED or CONFIRMED
+  turnDuration?: number; // in seconds // << ADDED or CONFIRME
+  playersPerTeam?: 7 | 9; // <-- Add this line if missing
+  tossWinner?: "A" | "B"; // <-- Add if needed for reconstruction
+  tossDecision?: "attack" | "defend";
 }
 
 export type SymbolType =

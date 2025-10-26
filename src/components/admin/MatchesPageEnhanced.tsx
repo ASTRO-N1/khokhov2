@@ -274,7 +274,8 @@ export function MatchesPageEnhanced() {
               <Button
                 size="sm"
                 className="flex-1 bg-green-600 hover:bg-green-700"
-                onClick={() => navigate(`/admin/results/${match.id}`)}
+                // --- NEW onClick ---
+                onClick={() => navigate(`/admin/results/match/${match.id}`)} // <-- CHANGE HERE
               >
                 <Eye className="w-4 h-4 mr-2" />
                 View

@@ -141,7 +141,7 @@ export function Scoreboard({
         </div>
 
         {/* Badges and Controls */}
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center  justify-center sm:justify-between gap-3">
           {/* Badges (Removed opacity during break to match desired screenshot) */}
           <div
             className={cn(
@@ -158,7 +158,7 @@ export function Scoreboard({
           </div>
 
           {/* Control Buttons */}
-          <div className="flex gap-2">
+          <div className="flex flex-wrap justify-center gap-2">
             {/* Show normal controls ONLY if not on break */}
             {!isOnBreak ? (
               <>

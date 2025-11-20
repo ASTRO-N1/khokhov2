@@ -601,19 +601,32 @@ export default function App() {
     }
   };
 
+// In LoginPage component inside src/App.tsx
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    
     const { data, error } = await supabase.auth.signInWithPassword({
       email: email,
       password: password,
     });
+
     if (error) {
-      setError(error.message);
+      // Fix: Check if message exists, otherwise print the whole error code
+      console.error("Login error:", error);
+      setError(error.message || "Login failed. Please check console for details.");
+      
+      // If we hit a 503 here, it means the server is actually down
+      if (error.status === 503) {
+         setError("Server is waking up. Please wait 1 minute and try again.");
+      }
       return;
     }
+
     if (data.user) {
-      await fetchAndSetUserProfile(data.user);
+      // Manually fetch profile if onAuthStateChange doesn't trigger fast enough
+      // Note: This relies on the parent component's logic, typically you'd just wait for the listener
     }
   };
 

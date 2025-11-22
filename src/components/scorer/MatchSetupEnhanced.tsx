@@ -16,6 +16,7 @@ import {
   Check,
   Trophy,
   Shield,
+  User,
   ArrowLeft,
 } from "lucide-react";
 import { Match, Player } from "../../types";
@@ -23,7 +24,6 @@ import { Checkbox } from "../ui/checkbox";
 import { RadioGroup, RadioGroupItem } from "../ui/radio-group";
 import { toast } from "sonner";
 import { Input } from "../ui/input";
-import { supabase } from "../../supabaseClient"; // Added Supabase Import
 
 interface MatchSetupEnhancedProps {
   match: Match;
@@ -64,7 +64,9 @@ export function MatchSetupEnhanced({
   const [customTimerMinutes, setCustomTimerMinutes] = useState<string>(
     String(match.turnDuration ? match.turnDuration / 60 : 7)
   );
-  const [isStarting, setIsStarting] = useState(false);
+
+  useEffect(() => {
+  }, [match]);
 
   const handlePlayerToggle = (playerId: string, team: "A" | "B") => {
     if (team === "A") {
@@ -116,10 +118,7 @@ export function MatchSetupEnhanced({
     }
   };
 
-  const handleStartMatch = async () => {
-    if (isStarting) return;
-    setIsStarting(true);
-
+  const handleStartMatch = () => {
     const teamAPlayingPlayers = match.teamA.players.filter((p) =>
       teamASelected.includes(p.id)
     );
@@ -140,7 +139,6 @@ export function MatchSetupEnhanced({
 
     if (isNaN(timerDuration) || timerDuration <= 0) {
       toast.error("Please enter a valid custom timer duration.");
-      setIsStarting(false);
       return;
     }
 
@@ -155,50 +153,8 @@ export function MatchSetupEnhanced({
       timerDuration,
     };
 
-    try {
-      // 1. Save Setup to LocalStorage (Persistence)
-      localStorage.setItem(
-        `match_setup_${match.id}`,
-        JSON.stringify(setupData)
-      );
-
-      // 2. Initialize Timer in LocalStorage (So it starts NOW)
-      // Only set if not already set (to avoid resetting if they clicked back and forward)
-      if (!localStorage.getItem(`match_timer_${match.id}`)) {
-        localStorage.setItem(`match_timer_${match.id}`, Date.now().toString());
-      }
-
-      // 3. Update DB Status to LIVE
-      const { error } = await supabase
-        .from("matches")
-        .update({ status: "live" })
-        .eq("id", match.id);
-
-      if (error) throw error;
-
-      // 4. Proceed
-      onStartMatch(setupData);
-    } catch (err: any) {
-      toast.error("Failed to start match: " + err.message);
-      setIsStarting(false);
-    }
+    onStartMatch(setupData);
   };
-
-  // ... (Rest of the UI rendering remains identical)
-  // Just copying the UI parts below to ensure the file is complete
-
-  const teamAPlaying = match.teamA.players.filter((p) =>
-    teamASelected.includes(p.id)
-  );
-  const teamASubstitutes = match.teamA.players.filter(
-    (p) => !teamASelected.includes(p.id)
-  );
-  const teamBPlaying = match.teamB.players.filter((p) =>
-    teamBSelected.includes(p.id)
-  );
-  const teamBSubstitutes = match.teamB.players.filter(
-    (p) => !teamBSelected.includes(p.id)
-  );
 
   if (step === "team-a") {
     return (
@@ -394,6 +350,19 @@ export function MatchSetupEnhanced({
     );
   }
 
+  const teamAPlaying = match.teamA.players.filter((p) =>
+    teamASelected.includes(p.id)
+  );
+  const teamASubstitutes = match.teamA.players.filter(
+    (p) => !teamASelected.includes(p.id)
+  );
+  const teamBPlaying = match.teamB.players.filter((p) =>
+    teamBSelected.includes(p.id)
+  );
+  const teamBSubstitutes = match.teamB.players.filter(
+    (p) => !teamBSelected.includes(p.id)
+  );
+
   return (
     <div className="min-h-screen bg-gray-50 p-4 lg:p-8">
       <div className="space-y-6 max-w-6xl mx-auto">
@@ -415,7 +384,6 @@ export function MatchSetupEnhanced({
         </div>
 
         <div className="grid lg:grid-cols-2 gap-6">
-          {/* Team A Preview */}
           <Card className="shadow-lg border-2 border-blue-300">
             <CardHeader className="border-b bg-gradient-to-r from-blue-50 to-blue-100">
               <CardTitle className="text-blue-900 flex items-center gap-2">
@@ -424,6 +392,9 @@ export function MatchSetupEnhanced({
               </CardTitle>
               <div className="space-y-1 text-sm">
                 <p className="text-blue-700">Captain: {match.teamA.captain}</p>
+                {match.teamA.coach && (
+                  <p className="text-blue-700">Coach: {match.teamA.coach}</p>
+                )}
               </div>
             </CardHeader>
             <CardContent className="pt-6">
@@ -448,11 +419,29 @@ export function MatchSetupEnhanced({
                     ))}
                   </div>
                 </div>
+                <div>
+                  <h3 className="text-sm font-medium text-gray-700 mb-2">
+                    Substitutes ({teamASubstitutes.length})
+                  </h3>
+                  <div className="grid grid-cols-2 gap-2">
+                    {teamASubstitutes.map((player) => (
+                      <div
+                        key={player.id}
+                        className="flex items-center gap-2 p-2 bg-gray-50 border border-gray-200 rounded-lg"
+                      >
+                        <div className="w-8 h-8 bg-gray-400 rounded-full flex items-center justify-center text-white text-xs flex-shrink-0">
+                          {player.jerseyNumber}
+                        </div>
+                        <span className="text-sm text-gray-600 truncate">
+                          {player.name}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               </div>
             </CardContent>
           </Card>
-
-          {/* Team B Preview */}
           <Card className="shadow-lg border-2 border-red-300">
             <CardHeader className="border-b bg-gradient-to-r from-red-50 to-red-100">
               <CardTitle className="text-red-900 flex items-center gap-2">
@@ -461,6 +450,9 @@ export function MatchSetupEnhanced({
               </CardTitle>
               <div className="space-y-1 text-sm">
                 <p className="text-red-700">Captain: {match.teamB.captain}</p>
+                {match.teamB.coach && (
+                  <p className="text-red-700">Coach: {match.teamB.coach}</p>
+                )}
               </div>
             </CardHeader>
             <CardContent className="pt-6">
@@ -479,6 +471,26 @@ export function MatchSetupEnhanced({
                           {player.jerseyNumber}
                         </div>
                         <span className="text-sm text-gray-900 truncate">
+                          {player.name}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <h3 className="text-sm font-medium text-gray-700 mb-2">
+                    Substitutes ({teamBSubstitutes.length})
+                  </h3>
+                  <div className="grid grid-cols-2 gap-2">
+                    {teamBSubstitutes.map((player) => (
+                      <div
+                        key={player.id}
+                        className="flex items-center gap-2 p-2 bg-gray-50 border border-gray-200 rounded-lg"
+                      >
+                        <div className="w-8 h-8 bg-gray-400 rounded-full flex items-center justify-center text-white text-xs flex-shrink-0">
+                          {player.jerseyNumber}
+                        </div>
+                        <span className="text-sm text-gray-600 truncate">
                           {player.name}
                         </span>
                       </div>
@@ -532,7 +544,18 @@ export function MatchSetupEnhanced({
                 </Select>
               </div>
             </div>
-
+            <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg mb-6">
+              <p className="text-sm text-blue-900">
+                <strong>
+                  {tossWinner === "A" ? match.teamA.name : match.teamB.name}
+                </strong>{" "}
+                won the toss and chose to{" "}
+                <strong>
+                  {tossDecision === "attack" ? "Attack" : "Defend"}
+                </strong>{" "}
+                first.
+              </p>
+            </div>
             <div className="space-y-4 border-t pt-6">
               <Label className="text-gray-700">Turn Duration</Label>
               <RadioGroup
@@ -552,8 +575,12 @@ export function MatchSetupEnhanced({
                   >
                     <RadioGroupItem value="7" id="7-min" />
                     <Label htmlFor="7-min" className="flex-1 cursor-pointer">
-                      7 Minutes
+                      <p className="font-medium text-gray-900">7 Minutes</p>
+                      <p className="text-sm text-gray-500">Standard</p>
                     </Label>
+                    {timerOption === "7" && (
+                      <Check className="w-5 h-5 text-blue-600" />
+                    )}
                   </div>
                   <div
                     className={`relative flex items-center space-x-3 p-4 border-2 rounded-lg cursor-pointer transition-all ${
@@ -565,8 +592,12 @@ export function MatchSetupEnhanced({
                   >
                     <RadioGroupItem value="9" id="9-min" />
                     <Label htmlFor="9-min" className="flex-1 cursor-pointer">
-                      9 Minutes
+                      <p className="font-medium text-gray-900">9 Minutes</p>
+                      <p className="text-sm text-gray-500">Extended</p>
                     </Label>
+                    {timerOption === "9" && (
+                      <Check className="w-5 h-5 text-blue-600" />
+                    )}
                   </div>
                   <div
                     className={`relative flex items-center space-x-3 p-4 border-2 rounded-lg cursor-pointer transition-all ${
@@ -581,8 +612,12 @@ export function MatchSetupEnhanced({
                       htmlFor="custom-min"
                       className="flex-1 cursor-pointer"
                     >
-                      Custom
+                      <p className="font-medium text-gray-900">Custom</p>
+                      <p className="text-sm text-gray-500">Set manually</p>
                     </Label>
+                    {timerOption === "custom" && (
+                      <Check className="w-5 h-5 text-blue-600" />
+                    )}
                   </div>
                 </div>
               </RadioGroup>
@@ -612,11 +647,10 @@ export function MatchSetupEnhanced({
           </Button>
           <Button
             onClick={handleStartMatch}
-            disabled={isStarting}
             className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 h-12 shadow-lg hover:shadow-xl transition-all text-white"
           >
-            {isStarting ? "Starting..." : "Start Match"}
-            {!isStarting && <Trophy className="w-5 h-5 mr-2" />}
+            <Trophy className="w-5 h-5 mr-2" />
+            Start Match
           </Button>
         </div>
       </div>

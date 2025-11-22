@@ -320,7 +320,8 @@ export function ScorerHomeEnhanced({
                 >
                   <Calendar className="w-4 h-4" />
                   <span className="hidden sm:inline">Upcoming</span>
-                  <Badge className="bg-white/20 text-white data-[state=active]:bg-white data-[state=active]:text-blue-600 ml-1">
+                  {/* Updated Badge Colors */}
+                  <Badge className="ml-1 bg-gray-200 text-gray-900 data-[state=active]:bg-white/20 data-[state=active]:text-white">
                     {upcomingMatches.length}
                   </Badge>
                 </TabsTrigger>
@@ -330,7 +331,8 @@ export function ScorerHomeEnhanced({
                 >
                   <Play className="w-4 h-4" />
                   <span className="hidden sm:inline">Live</span>
-                  <Badge className="bg-white/20 text-white data-[state=active]:bg-white data-[state=active]:text-red-600 ml-1">
+                  {/* Updated Badge Colors */}
+                  <Badge className="ml-1 bg-gray-200 text-gray-900 data-[state=active]:bg-white/20 data-[state=active]:text-white">
                     {liveMatches.length}
                   </Badge>
                 </TabsTrigger>
@@ -340,7 +342,8 @@ export function ScorerHomeEnhanced({
                 >
                   <CheckCircle className="w-4 h-4" />
                   <span className="hidden sm:inline">Finished</span>
-                  <Badge className="bg-white/20 text-white data-[state=active]:bg-white data-[state=active]:text-green-600 ml-1">
+                  {/* Updated Badge Colors */}
+                  <Badge className="ml-1 bg-gray-200 text-gray-900 data-[state=active]:bg-white/20 data-[state=active]:text-white">
                     {finishedMatches.length}
                   </Badge>
                 </TabsTrigger>

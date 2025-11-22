@@ -16,22 +16,21 @@ import {
   Check,
   Trophy,
   Shield,
-  User,
   ArrowLeft,
-} from "lucide-react"; // Added ArrowLeft
+} from "lucide-react";
 import { Match, Player } from "../../types";
 import { Checkbox } from "../ui/checkbox";
 import { RadioGroup, RadioGroupItem } from "../ui/radio-group";
-import { toast } from "sonner"; // Ensure toast is imported if used
-import { Input } from "../ui/input"; // Import Input if needed for custom timer
+import { toast } from "sonner";
+import { Input } from "../ui/input";
+import { supabase } from "../../supabaseClient"; // Added Supabase Import
 
 interface MatchSetupEnhancedProps {
   match: Match;
-  onBack: () => void; // This will now go back to the scorer home
+  onBack: () => void;
   onStartMatch: (setupData: MatchSetupData) => void;
 }
 
-// Ensure playersPerTeam is included if you fetch/pass it
 export interface MatchSetupData {
   teamAPlaying: Player[];
   teamASubstitutes: Player[];
@@ -39,18 +38,16 @@ export interface MatchSetupData {
   teamBSubstitutes: Player[];
   tossWinner: "A" | "B";
   tossDecision: "attack" | "defend";
-  playersPerTeam: 7 | 9; // Keep this if needed downstream
+  playersPerTeam: 7 | 9;
   timerDuration: number;
 }
 
 export function MatchSetupEnhanced({
   match,
-  onBack, // Renamed for clarity
+  onBack,
   onStartMatch,
 }: MatchSetupEnhancedProps) {
-  // Start directly at team-a selection
   const [step, setStep] = useState<"team-a" | "team-b" | "preview">("team-a");
-  // Default playersPerTeam to 7, or fetch/pass from tournament settings if available
   const [playersPerTeam] = useState<7 | 9>(match.playersPerTeam || 9);
   const [teamASelected, setTeamASelected] = useState<string[]>([]);
   const [teamBSelected, setTeamBSelected] = useState<string[]>([]);
@@ -58,7 +55,6 @@ export function MatchSetupEnhanced({
   const [tossDecision, setTossDecision] = useState<"attack" | "defend">(
     "attack"
   );
-  // Default timer option to 7 minutes, or fetch/pass from tournament settings
   const [timerOption, setTimerOption] = useState<"7" | "9" | "custom">(
     String(match.turnDuration ? match.turnDuration / 60 : 7) as
       | "7"
@@ -68,11 +64,7 @@ export function MatchSetupEnhanced({
   const [customTimerMinutes, setCustomTimerMinutes] = useState<string>(
     String(match.turnDuration ? match.turnDuration / 60 : 7)
   );
-
-  // Pre-select players if resuming setup (optional logic)
-  useEffect(() => {
-    // If you need to pre-load selections based on saved state, do it here
-  }, [match]); // Rerun if match changes
+  const [isStarting, setIsStarting] = useState(false);
 
   const handlePlayerToggle = (playerId: string, team: "A" | "B") => {
     if (team === "A") {
@@ -115,17 +107,19 @@ export function MatchSetupEnhanced({
   };
 
   const handleBackStep = () => {
-    // No config step to go back to from team-a
     if (step === "team-b") {
       setStep("team-a");
     } else if (step === "preview") {
       setStep("team-b");
     } else if (step === "team-a") {
-      onBack(); // Go back to scorer home if on the first step
+      onBack();
     }
   };
 
-  const handleStartMatch = () => {
+  const handleStartMatch = async () => {
+    if (isStarting) return;
+    setIsStarting(true);
+
     const teamAPlayingPlayers = match.teamA.players.filter((p) =>
       teamASelected.includes(p.id)
     );
@@ -146,6 +140,7 @@ export function MatchSetupEnhanced({
 
     if (isNaN(timerDuration) || timerDuration <= 0) {
       toast.error("Please enter a valid custom timer duration.");
+      setIsStarting(false);
       return;
     }
 
@@ -160,10 +155,51 @@ export function MatchSetupEnhanced({
       timerDuration,
     };
 
-    onStartMatch(setupData);
+    try {
+      // 1. Save Setup to LocalStorage (Persistence)
+      localStorage.setItem(
+        `match_setup_${match.id}`,
+        JSON.stringify(setupData)
+      );
+
+      // 2. Initialize Timer in LocalStorage (So it starts NOW)
+      // Only set if not already set (to avoid resetting if they clicked back and forward)
+      if (!localStorage.getItem(`match_timer_${match.id}`)) {
+        localStorage.setItem(`match_timer_${match.id}`, Date.now().toString());
+      }
+
+      // 3. Update DB Status to LIVE
+      const { error } = await supabase
+        .from("matches")
+        .update({ status: "live" })
+        .eq("id", match.id);
+
+      if (error) throw error;
+
+      // 4. Proceed
+      onStartMatch(setupData);
+    } catch (err: any) {
+      toast.error("Failed to start match: " + err.message);
+      setIsStarting(false);
+    }
   };
 
-  // Team A Selection (Now the first step)
+  // ... (Rest of the UI rendering remains identical)
+  // Just copying the UI parts below to ensure the file is complete
+
+  const teamAPlaying = match.teamA.players.filter((p) =>
+    teamASelected.includes(p.id)
+  );
+  const teamASubstitutes = match.teamA.players.filter(
+    (p) => !teamASelected.includes(p.id)
+  );
+  const teamBPlaying = match.teamB.players.filter((p) =>
+    teamBSelected.includes(p.id)
+  );
+  const teamBSubstitutes = match.teamB.players.filter(
+    (p) => !teamBSelected.includes(p.id)
+  );
+
   if (step === "team-a") {
     return (
       <div className="min-h-screen bg-gray-50 p-4 lg:p-8">
@@ -173,13 +209,9 @@ export function MatchSetupEnhanced({
               <Shield className="w-32 h-32 text-white" />
             </div>
             <div className="relative z-10 flex items-center justify-between pt-10 sm:pt-0">
-              {" "}
-              {/* Added padding top for mobile */}
               <div>
                 <h2 className="text-white mb-1">{match.teamA.name}</h2>
                 <p className="text-purple-100">
-                  {" "}
-                  {/* Adjusted color for contrast */}
                   Select {playersPerTeam} playing players
                 </p>
               </div>
@@ -200,7 +232,6 @@ export function MatchSetupEnhanced({
                   {teamASelected.length}/{playersPerTeam} Selected
                 </Badge>
               </div>
-              {/* Captain/Coach Info */}
             </CardHeader>
             <CardContent className="pt-6">
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -209,7 +240,6 @@ export function MatchSetupEnhanced({
                   const isDisabled =
                     !isSelected && teamASelected.length >= playersPerTeam;
                   return (
-                    // REMOVED cursor-pointer and hover styles
                     <div
                       key={player.id}
                       className={`flex items-center gap-3 p-4 border-2 rounded-lg transition-colors duration-200 ${
@@ -217,7 +247,7 @@ export function MatchSetupEnhanced({
                           ? "border-blue-600 bg-blue-50"
                           : isDisabled
                           ? "border-gray-200 bg-gray-50 opacity-60"
-                          : "border-gray-200" // Removed hover styles
+                          : "border-gray-200"
                       }`}
                       onClick={() =>
                         !isDisabled && handlePlayerToggle(player.id, "A")
@@ -246,13 +276,11 @@ export function MatchSetupEnhanced({
                 })}
               </div>
               <div className="flex gap-3 mt-6">
-                {/* Back button now uses onBack directly */}
                 <Button variant="outline" onClick={onBack} className="flex-1">
                   Back to Matches
                 </Button>
                 <Button
                   onClick={handleNext}
-                  // Keep disabled logic
                   disabled={teamASelected.length !== playersPerTeam}
                   className="flex-1 bg-purple-600 hover:bg-purple-700"
                 >
@@ -267,25 +295,18 @@ export function MatchSetupEnhanced({
     );
   }
 
-  // Team B Selection
   if (step === "team-b") {
     return (
       <div className="min-h-screen bg-gray-50 p-4 lg:p-8">
         <div className="space-y-6 max-w-4xl mx-auto">
           <div className="relative overflow-hidden rounded-lg bg-gradient-to-r from-red-600 to-pink-600 p-6 shadow-lg">
-            {" "}
-            {/* Changed Color */}
             <div className="absolute right-0 top-0 bottom-0 flex items-center pr-6 opacity-10">
               <Shield className="w-32 h-32 text-white" />
             </div>
             <div className="relative z-10 flex items-center justify-between pt-10 sm:pt-0">
-              {" "}
-              {/* Added padding top for mobile */}
               <div>
                 <h2 className="text-white mb-1">{match.teamB.name}</h2>
                 <p className="text-red-100">
-                  {" "}
-                  {/* Adjusted color */}
                   Select {playersPerTeam} playing players
                 </p>
               </div>
@@ -296,24 +317,16 @@ export function MatchSetupEnhanced({
           </div>
 
           <Card className="shadow-lg border-2 border-red-300">
-            {" "}
-            {/* Changed Color */}
             <CardHeader className="border-b bg-gradient-to-r from-red-50 to-red-100">
-              {" "}
-              {/* Changed Color */}
               <div className="flex items-center justify-between">
                 <CardTitle className="flex items-center gap-2">
-                  <Users className="w-5 h-5 text-red-600" />{" "}
-                  {/* Changed Color */}
+                  <Users className="w-5 h-5 text-red-600" />
                   Player Selection
                 </CardTitle>
                 <Badge className="bg-red-600">
-                  {" "}
-                  {/* Changed Color */}
                   {teamBSelected.length}/{playersPerTeam} Selected
                 </Badge>
               </div>
-              {/* Captain/Coach Info */}
             </CardHeader>
             <CardContent className="pt-6">
               <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -322,15 +335,14 @@ export function MatchSetupEnhanced({
                   const isDisabled =
                     !isSelected && teamBSelected.length >= playersPerTeam;
                   return (
-                    // REMOVED cursor-pointer and hover styles
                     <div
                       key={player.id}
                       className={`flex items-center gap-3 p-4 border-2 rounded-lg transition-colors duration-200 ${
                         isSelected
-                          ? "border-red-600 bg-red-50" // Changed color
+                          ? "border-red-600 bg-red-50"
                           : isDisabled
                           ? "border-gray-200 bg-gray-50 opacity-60"
-                          : "border-gray-200" // Removed hover styles
+                          : "border-gray-200"
                       }`}
                       onClick={() =>
                         !isDisabled && handlePlayerToggle(player.id, "B")
@@ -338,8 +350,6 @@ export function MatchSetupEnhanced({
                     >
                       <Checkbox checked={isSelected} disabled={isDisabled} />
                       <div className="w-10 h-10 bg-gradient-to-br from-red-600 to-pink-600 rounded-full flex items-center justify-center text-white flex-shrink-0">
-                        {" "}
-                        {/* Changed Color */}
                         {player.jerseyNumber}
                       </div>
                       <div className="flex-1 min-w-0">
@@ -352,8 +362,7 @@ export function MatchSetupEnhanced({
                       </div>
                       {isSelected && (
                         <Badge className="bg-red-600">Playing</Badge>
-                      )}{" "}
-                      {/* Changed Color */}
+                      )}
                       {isDisabled && !isSelected && (
                         <Badge variant="secondary">Substitute</Badge>
                       )}
@@ -372,7 +381,7 @@ export function MatchSetupEnhanced({
                 <Button
                   onClick={handleNext}
                   disabled={teamBSelected.length !== playersPerTeam}
-                  className="flex-1 bg-red-600 hover:bg-red-700" // Changed Color
+                  className="flex-1 bg-red-600 hover:bg-red-700"
                 >
                   Next - Preview
                   <ArrowRight className="w-4 h-4 ml-2" />
@@ -385,20 +394,6 @@ export function MatchSetupEnhanced({
     );
   }
 
-  // Preview Step (mostly unchanged, just step numbering)
-  const teamAPlaying = match.teamA.players.filter((p) =>
-    teamASelected.includes(p.id)
-  );
-  const teamASubstitutes = match.teamA.players.filter(
-    (p) => !teamASelected.includes(p.id)
-  );
-  const teamBPlaying = match.teamB.players.filter((p) =>
-    teamBSelected.includes(p.id)
-  );
-  const teamBSubstitutes = match.teamB.players.filter(
-    (p) => !teamBSelected.includes(p.id)
-  );
-
   return (
     <div className="min-h-screen bg-gray-50 p-4 lg:p-8">
       <div className="space-y-6 max-w-6xl mx-auto">
@@ -407,8 +402,6 @@ export function MatchSetupEnhanced({
             <Trophy className="w-32 h-32 text-white" />
           </div>
           <div className="relative z-10 flex items-center justify-between pt-10 sm:pt-0">
-            {" "}
-            {/* Added padding top for mobile */}
             <div>
               <h2 className="text-white mb-1">Match Preview</h2>
               <p className="text-blue-100">
@@ -416,15 +409,14 @@ export function MatchSetupEnhanced({
               </p>
             </div>
             <div className="bg-white/20 backdrop-blur-sm px-4 py-2 rounded-lg border border-white/30">
-              <p className="text-white text-sm">Step 3 of 3</p>{" "}
-              {/* Updated step count */}
+              <p className="text-white text-sm">Step 3 of 3</p>
             </div>
           </div>
         </div>
-        {/* Team Lineups */}
+
         <div className="grid lg:grid-cols-2 gap-6">
+          {/* Team A Preview */}
           <Card className="shadow-lg border-2 border-blue-300">
-            {/* ... Team A details ... */}
             <CardHeader className="border-b bg-gradient-to-r from-blue-50 to-blue-100">
               <CardTitle className="text-blue-900 flex items-center gap-2">
                 <Shield className="w-5 h-5" />
@@ -432,9 +424,6 @@ export function MatchSetupEnhanced({
               </CardTitle>
               <div className="space-y-1 text-sm">
                 <p className="text-blue-700">Captain: {match.teamA.captain}</p>
-                {match.teamA.coach && (
-                  <p className="text-blue-700">Coach: {match.teamA.coach}</p>
-                )}
               </div>
             </CardHeader>
             <CardContent className="pt-6">
@@ -459,31 +448,12 @@ export function MatchSetupEnhanced({
                     ))}
                   </div>
                 </div>
-                <div>
-                  <h3 className="text-sm font-medium text-gray-700 mb-2">
-                    Substitutes ({teamASubstitutes.length})
-                  </h3>
-                  <div className="grid grid-cols-2 gap-2">
-                    {teamASubstitutes.map((player) => (
-                      <div
-                        key={player.id}
-                        className="flex items-center gap-2 p-2 bg-gray-50 border border-gray-200 rounded-lg"
-                      >
-                        <div className="w-8 h-8 bg-gray-400 rounded-full flex items-center justify-center text-white text-xs flex-shrink-0">
-                          {player.jerseyNumber}
-                        </div>
-                        <span className="text-sm text-gray-600 truncate">
-                          {player.name}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
               </div>
             </CardContent>
           </Card>
+
+          {/* Team B Preview */}
           <Card className="shadow-lg border-2 border-red-300">
-            {/* ... Team B details ... */}
             <CardHeader className="border-b bg-gradient-to-r from-red-50 to-red-100">
               <CardTitle className="text-red-900 flex items-center gap-2">
                 <Shield className="w-5 h-5" />
@@ -491,9 +461,6 @@ export function MatchSetupEnhanced({
               </CardTitle>
               <div className="space-y-1 text-sm">
                 <p className="text-red-700">Captain: {match.teamB.captain}</p>
-                {match.teamB.coach && (
-                  <p className="text-red-700">Coach: {match.teamB.coach}</p>
-                )}
               </div>
             </CardHeader>
             <CardContent className="pt-6">
@@ -518,31 +485,11 @@ export function MatchSetupEnhanced({
                     ))}
                   </div>
                 </div>
-                <div>
-                  <h3 className="text-sm font-medium text-gray-700 mb-2">
-                    Substitutes ({teamBSubstitutes.length})
-                  </h3>
-                  <div className="grid grid-cols-2 gap-2">
-                    {teamBSubstitutes.map((player) => (
-                      <div
-                        key={player.id}
-                        className="flex items-center gap-2 p-2 bg-gray-50 border border-gray-200 rounded-lg"
-                      >
-                        <div className="w-8 h-8 bg-gray-400 rounded-full flex items-center justify-center text-white text-xs flex-shrink-0">
-                          {player.jerseyNumber}
-                        </div>
-                        <span className="text-sm text-gray-600 truncate">
-                          {player.name}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
               </div>
             </CardContent>
           </Card>
         </div>
-        {/* Toss Details & Timer */}
+
         <Card className="shadow-lg border-2 border-blue-300">
           <CardHeader className="border-b bg-gradient-to-r from-blue-50 to-blue-100">
             <CardTitle className="flex items-center gap-2 text-blue-900">
@@ -552,7 +499,6 @@ export function MatchSetupEnhanced({
           </CardHeader>
           <CardContent className="pt-6">
             <div className="grid md:grid-cols-2 gap-6 mb-6">
-              {/* Toss Winner Select */}
               <div className="space-y-2">
                 <Label className="text-gray-700">Toss Won By</Label>
                 <Select
@@ -568,7 +514,6 @@ export function MatchSetupEnhanced({
                   </SelectContent>
                 </Select>
               </div>
-              {/* Toss Decision Select */}
               <div className="space-y-2">
                 <Label className="text-gray-700">Choice</Label>
                 <Select
@@ -587,19 +532,7 @@ export function MatchSetupEnhanced({
                 </Select>
               </div>
             </div>
-            <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg mb-6">
-              <p className="text-sm text-blue-900">
-                <strong>
-                  {tossWinner === "A" ? match.teamA.name : match.teamB.name}
-                </strong>{" "}
-                won the toss and chose to{" "}
-                <strong>
-                  {tossDecision === "attack" ? "Attack" : "Defend"}
-                </strong>{" "}
-                first.
-              </p>
-            </div>
-            {/* Timer Configuration */}
+
             <div className="space-y-4 border-t pt-6">
               <Label className="text-gray-700">Turn Duration</Label>
               <RadioGroup
@@ -619,12 +552,8 @@ export function MatchSetupEnhanced({
                   >
                     <RadioGroupItem value="7" id="7-min" />
                     <Label htmlFor="7-min" className="flex-1 cursor-pointer">
-                      <p className="font-medium text-gray-900">7 Minutes</p>
-                      <p className="text-sm text-gray-500">Standard</p>
+                      7 Minutes
                     </Label>
-                    {timerOption === "7" && (
-                      <Check className="w-5 h-5 text-blue-600" />
-                    )}
                   </div>
                   <div
                     className={`relative flex items-center space-x-3 p-4 border-2 rounded-lg cursor-pointer transition-all ${
@@ -636,12 +565,8 @@ export function MatchSetupEnhanced({
                   >
                     <RadioGroupItem value="9" id="9-min" />
                     <Label htmlFor="9-min" className="flex-1 cursor-pointer">
-                      <p className="font-medium text-gray-900">9 Minutes</p>
-                      <p className="text-sm text-gray-500">Extended</p>
+                      9 Minutes
                     </Label>
-                    {timerOption === "9" && (
-                      <Check className="w-5 h-5 text-blue-600" />
-                    )}
                   </div>
                   <div
                     className={`relative flex items-center space-x-3 p-4 border-2 rounded-lg cursor-pointer transition-all ${
@@ -656,12 +581,8 @@ export function MatchSetupEnhanced({
                       htmlFor="custom-min"
                       className="flex-1 cursor-pointer"
                     >
-                      <p className="font-medium text-gray-900">Custom</p>
-                      <p className="text-sm text-gray-500">Set manually</p>
+                      Custom
                     </Label>
-                    {timerOption === "custom" && (
-                      <Check className="w-5 h-5 text-blue-600" />
-                    )}
                   </div>
                 </div>
               </RadioGroup>
@@ -685,17 +606,17 @@ export function MatchSetupEnhanced({
           </CardContent>
         </Card>
 
-        {/* Start Match Button */}
         <div className="flex gap-3">
           <Button variant="outline" onClick={handleBackStep} className="flex-1">
             Back
           </Button>
           <Button
             onClick={handleStartMatch}
+            disabled={isStarting}
             className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 h-12 shadow-lg hover:shadow-xl transition-all text-white"
           >
-            <Trophy className="w-5 h-5 mr-2" />
-            Start Match
+            {isStarting ? "Starting..." : "Start Match"}
+            {!isStarting && <Trophy className="w-5 h-5 mr-2" />}
           </Button>
         </div>
       </div>

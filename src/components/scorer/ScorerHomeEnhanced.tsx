@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
+import { Card, CardContent, CardHeader } from "../ui/card";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
@@ -11,9 +11,8 @@ import {
   Trophy,
   Target,
   CheckCircle,
-  User,
 } from "lucide-react";
-import { Match, User as UserType, Player, Team } from "../../types";
+import { Match, User as UserType, Team } from "../../types";
 import { ViewResultModal } from "./ViewResultModal";
 import { supabase } from "../../supabaseClient";
 import { useNavigate } from "react-router-dom";
@@ -34,6 +33,40 @@ export function ScorerHomeEnhanced({
   const [selectedFinishedMatch, setSelectedFinishedMatch] =
     useState<Match | null>(null);
 
+  // --- 1. Auto-Resume Logic (The Fix for Refresh Crash) ---
+  useEffect(() => {
+    const checkSavedSession = () => {
+      const saved = localStorage.getItem("activeMatchSetup");
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          
+          // Check if data is fresh (less than 24 hours old)
+          const oneDay = 24 * 60 * 60 * 1000;
+          if (Date.now() - parsed.timestamp > oneDay) {
+            localStorage.removeItem("activeMatchSetup");
+            return;
+          }
+
+          // If we have a live match saved, resume immediately
+          if (parsed.status === "live" && parsed.match) {
+            console.log("Restoring active match from crash/refresh...");
+            toast.success("Resuming previous session...");
+            onStartMatch(parsed.match);
+          }
+        } catch (e) {
+          console.error("Failed to restore match", e);
+          localStorage.removeItem("activeMatchSetup");
+        }
+      }
+    };
+
+    // Small delay ensures parent components are fully mounted before redirecting
+    const timer = setTimeout(checkSavedSession, 100);
+    return () => clearTimeout(timer);
+  }, [onStartMatch]);
+  // ----------------------------------------------------------
+
   useEffect(() => {
     const fetchAssignedMatches = async () => {
       if (!user?.id) {
@@ -43,8 +76,6 @@ export function ScorerHomeEnhanced({
 
       setLoading(true);
 
-      // This is the corrected query.
-      // players!team_id(...) tells Supabase to join players using the 'team_id' foreign key.
       const { data, error } = await supabase
         .from("matches")
         .select(
@@ -227,8 +258,7 @@ export function ScorerHomeEnhanced({
             <Button
               variant="outline"
               className="w-full hover:bg-green-50 hover:text-green-700 hover:border-green-400 transition-all"
-              // --- CORRECTED Scorer Route ---
-              onClick={() => navigate(`/scorer/results/match/${match.id}`)} // <-- Use scorer-specific path
+              onClick={() => navigate(`/scorer/results/match/${match.id}`)}
             >
               <CheckCircle className="w-4 h-4 mr-2" />
               View Results
@@ -253,7 +283,6 @@ export function ScorerHomeEnhanced({
         <ViewResultModal
           match={selectedFinishedMatch}
           onClose={() => setSelectedFinishedMatch(null)}
-          // These would be fetched from a 'match_actions' table in a real app
           actions={[]}
           setupData={undefined}
         />

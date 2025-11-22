@@ -46,14 +46,13 @@ import { User as UserType, Match, Tournament, ScoringAction } from "./types";
 import { supabase } from "./supabaseClient";
 import { toast } from "sonner";
 import { TurnByTurnResultView } from "./components/TurnByTurnResultView";
-// --- Helper Wrappers for Routing ---
 
-// Renders the CreateTournamentPage (for both create and edit modes)
+// --- Helper Wrappers ---
+
 function TournamentEditorWrapper() {
   const { tournamentId } = useParams();
   const navigate = useNavigate();
   const onNavigate = (path: string) => navigate(path);
-
   return (
     <CreateTournamentPage
       tournamentId={tournamentId}
@@ -63,13 +62,11 @@ function TournamentEditorWrapper() {
   );
 }
 
-// Renders the EditMatchPage
 function MatchEditorWrapper() {
   const { matchId } = useParams();
   const navigate = useNavigate();
   const onNavigate = (path: string) => navigate(path);
   if (!matchId) return <Navigate to="/admin/matches" replace />;
-
   return (
     <EditMatchPage
       matchId={matchId}
@@ -79,13 +76,11 @@ function MatchEditorWrapper() {
   );
 }
 
-// Renders the EditTeamPage
 function TeamEditorWrapper() {
   const { teamId } = useParams();
   const navigate = useNavigate();
   const onNavigate = (path: string) => navigate(path);
   if (!teamId) return <Navigate to="/admin/teams" replace />;
-
   return (
     <EditTeamPage
       teamId={teamId}
@@ -95,7 +90,6 @@ function TeamEditorWrapper() {
   );
 }
 
-// Renders MatchDetailsPage for a specific match
 function MatchResultWrapper() {
   const { matchId } = useParams<{ matchId: string }>();
   const navigate = useNavigate();
@@ -108,17 +102,10 @@ function MatchResultWrapper() {
         setLoading(false);
         return;
       }
-
       const { data, error } = await supabase
         .from("matches")
         .select(
-          `
-          *,
-          team_a:teams!matches_team_a_id_fkey(*, players!team_id(*)),
-          team_b:teams!matches_team_b_id_fkey(*, players!team_id(*)),
-          tournament:tournaments(*),
-          scorer:profiles(name)
-        `
+          `*, team_a:teams!matches_team_a_id_fkey(*, players!team_id(*)), team_b:teams!matches_team_b_id_fkey(*, players!team_id(*)), tournament:tournaments(*), scorer:profiles(name)`
         )
         .eq("id", matchId)
         .single();
@@ -128,7 +115,6 @@ function MatchResultWrapper() {
         setLoading(false);
         return;
       }
-
       if (data) {
         const formattedMatch: Match = {
           id: data.id,
@@ -164,35 +150,24 @@ function MatchResultWrapper() {
       }
       setLoading(false);
     };
-
     fetchMatchDetails();
   }, [matchId]);
 
-  if (loading) {
-    return <div>Loading match details...</div>;
-  }
-
-  if (!match) {
-    return <Navigate to="/admin/results" replace />;
-  }
-
+  if (loading) return <div>Loading match details...</div>;
+  if (!match) return <Navigate to="/admin/results" replace />;
   return (
     <MatchResultView match={match} onBack={() => navigate("/admin/results")} />
   );
 }
 
-// Renders TournamentDetailsPage for a specific tournament
 function TournamentDetailsWrapper() {
   const { tournamentId } = useParams();
   const navigate = useNavigate();
   const onNavigate = (path: string) => navigate(path);
-  // In a real app, this would fetch the tournament details.
   const tournament = mockTournaments.find(
     (t) => t.id === tournamentId
   ) as unknown as Tournament;
-
   if (!tournament) return <Navigate to="/admin/tournaments" replace />;
-
   return (
     <TournamentDetailsPage
       tournament={tournament}
@@ -203,7 +178,6 @@ function TournamentDetailsWrapper() {
   );
 }
 
-// Renders the MatchSetupEnhanced Page
 function MatchSetupWrapper({
   match,
   onBack,
@@ -215,19 +189,15 @@ function MatchSetupWrapper({
 }) {
   const { matchId } = useParams();
   const navigate = useNavigate();
-
-  // If match is not set in state, look it up from mock data using URL param.
   const matchData = useMemo(() => {
     return match || mockMatches.find((m) => m.id === matchId);
   }, [match, matchId]);
 
-  // Guard clause if data is missing or user navigated directly
   if (!matchData) {
     toast.error("Match data is missing. Redirecting...");
     navigate("/scorer/home", { replace: true });
     return null;
   }
-
   return (
     <MatchSetupEnhanced
       match={matchData}
@@ -237,7 +207,6 @@ function MatchSetupWrapper({
   );
 }
 
-// Renders the LiveScoringV4 Page
 function LiveScoringWrapper({
   match,
   setupData,
@@ -250,19 +219,52 @@ function LiveScoringWrapper({
   onBack: () => void;
 }) {
   const navigate = useNavigate();
+  const { matchId } = useParams();
 
-  // Guard clause if setup data is missing (e.g., page refresh on live-scoring)
-  if (!match || !setupData) {
-    toast.error("Match setup incomplete. Redirecting...");
-    // A more robust solution might try to fetch/reconstruct this data
-    navigate("/scorer/home", { replace: true });
-    return null;
+  // --- NEW: Auto-Recover Setup Data from Storage ---
+  const [localSetup, setLocalSetup] = useState<MatchSetupData | null>(null);
+
+  useEffect(() => {
+    // If props are missing (refresh), try local storage
+    if (!setupData && matchId) {
+      const stored = localStorage.getItem(`match_setup_${matchId}`);
+      if (stored) {
+        try {
+          setLocalSetup(JSON.parse(stored));
+        } catch (e) {
+          console.error("Failed to parse saved match setup");
+        }
+      }
+    }
+  }, [setupData, matchId]);
+
+  const effectiveSetup = setupData || localSetup;
+
+  // If still missing after check, then redirect
+  if (!match || !effectiveSetup) {
+    // Only redirect if we've tried to load and failed
+    if (!setupData && !localSetup && matchId) {
+      // Give it a split second for useEffect to fire? No, useEffect runs after render.
+      // If localSetup is null on first render, we might flicker or redirect.
+      // Better strategy: Return null until we check.
+      const stored = localStorage.getItem(`match_setup_${matchId}`);
+      if (!stored) {
+        // Genuine missing data
+        toast.error("Match setup missing. Please restart match.");
+        navigate("/scorer/home", { replace: true });
+        return null;
+      }
+      // If stored exists, we wait for the useEffect to set it.
+      // Or we can lazily initialize state.
+    }
+    // If we have storage but state isn't set yet
+    if (!effectiveSetup) return null;
   }
 
   return (
     <LiveScoringV4
       match={match}
-      setupData={setupData}
+      setupData={effectiveSetup!}
       onBack={onBack}
       onEndMatch={onEndMatch}
     />
@@ -288,20 +290,13 @@ function AdminRouter({
       const { data, error } = await supabase
         .from("matches")
         .select(
-          `
-          *,
-          team_a:teams!matches_team_a_id_fkey(*),
-          team_b:teams!matches_team_b_id_fkey(*),
-          tournament:tournaments(*),
-          scorer:profiles(name)
-        `
+          `*, team_a:teams!matches_team_a_id_fkey(*), team_b:teams!matches_team_b_id_fkey(*), tournament:tournaments(*), scorer:profiles(name)`
         )
         .eq("status", "finished")
         .order("match_datetime", { ascending: false });
 
-      if (error) {
-        toast.error("Failed to fetch finished matches.");
-      } else if (data) {
+      if (error) toast.error("Failed to fetch finished matches.");
+      else if (data) {
         const formattedMatches: Match[] = data.map((m: any) => ({
           id: m.id,
           matchNumber: m.match_number,
@@ -330,13 +325,11 @@ function AdminRouter({
       }
       setLoading(false);
     };
-
     fetchFinishedMatches();
   }, []);
 
   return (
     <AdminLayout
-      // Use pathname for highlighting the active link in the sidebar
       currentPage={location.pathname.split("/admin/")[1] || "home"}
       onNavigate={onNavigate}
       onLogout={onLogout}
@@ -381,8 +374,7 @@ function AdminRouter({
         <Route
           path="results/match/:matchId"
           element={<TurnByTurnResultView />}
-        />{" "}
-        {/* <-- ADD THIS */}
+        />
         <Route path="/" element={<Navigate to="home" replace />} />
         <Route path="*" element={<Navigate to="home" replace />} />
       </Routes>
@@ -418,50 +410,56 @@ function ScorerRouter({
 
   const handleStartMatch = (match: Match) => {
     setSelectedMatch(match);
-    navigate(`/scorer/match/${match.id}/setup`);
+
+    // --- UPDATED: Routing Logic based on Status ---
+    if (match.status === "live") {
+      // Check if we have local data to resume
+      const savedSetup = localStorage.getItem(`match_setup_${match.id}`);
+      if (savedSetup) {
+        setMatchSetupData(JSON.parse(savedSetup));
+        navigate(`/scorer/match/${match.id}/live`);
+      } else {
+        // Match is live in DB but no local data? Force re-setup to be safe.
+        // Or show toast "Resuming..."
+        toast.warning("Resuming match setup...");
+        navigate(`/scorer/match/${match.id}/setup`);
+      }
+    } else {
+      // Upcoming -> Setup
+      navigate(`/scorer/match/${match.id}/setup`);
+    }
   };
 
   const handleMatchSetupComplete = (setupData: MatchSetupData) => {
     setMatchSetupData(setupData);
-    // Use match ID in the URL to retain context on refresh
     navigate(`/scorer/match/${selectedMatch?.id}/live`);
   };
 
   const handleEndMatch = async (actions: ScoringAction[]) => {
     if (!selectedMatch) return;
-
     let scoreA = 0;
     let scoreB = 0;
-
-    // FIX: Calculate points based on the scoring team's ID
     actions.forEach((action) => {
-      // NOTE: ScoringAction interface has 'scoringTeamId', DbScoringAction has 'scoring_team_id'
       const scoringId = (action as any).scoring_team_id || action.scoringTeamId;
-
-      if (scoringId === selectedMatch.teamA.id) {
-        scoreA += action.points;
-      } else if (scoringId === selectedMatch.teamB.id) {
-        scoreB += action.points;
-      }
+      if (scoringId === selectedMatch.teamA.id) scoreA += action.points;
+      else if (scoringId === selectedMatch.teamB.id) scoreB += action.points;
     });
 
     const { error } = await supabase
       .from("matches")
-      .update({
-        status: "finished",
-        score_a: scoreA, // Correctly saves the final score A
-        score_b: scoreB, // Correctly saves the final score B
-      })
+      .update({ status: "finished", score_a: scoreA, score_b: scoreB })
       .eq("id", selectedMatch.id);
 
     if (error) {
       toast.error(`Failed to end match: ${error.message}`);
     } else {
-      // Update the local match object scores before redirecting to ensure the UI updates if necessary
       selectedMatch.scoreA = scoreA;
       selectedMatch.scoreB = scoreB;
       selectedMatch.status = "finished";
-      toast.success("Match has been successfully ended and results are saved.");
+      // Cleanup Local Storage
+      localStorage.removeItem(`match_setup_${selectedMatch.id}`);
+      localStorage.removeItem(`match_timer_${selectedMatch.id}`);
+      toast.success("Match ended and saved.");
       onBackFromScoring();
     }
   };
@@ -483,7 +481,6 @@ function ScorerRouter({
             />
           }
         />
-
         <Route
           path="match/:matchId/setup"
           element={
@@ -494,7 +491,6 @@ function ScorerRouter({
             />
           }
         />
-
         <Route
           path="match/:matchId/live"
           element={
@@ -506,14 +502,10 @@ function ScorerRouter({
             />
           }
         />
-
-        {/* --- ADD THIS NEW ROUTE --- */}
         <Route
           path="results/match/:matchId"
           element={<TurnByTurnResultView />}
         />
-        {/* --- END OF NEW ROUTE --- */}
-
         <Route path="/" element={<Navigate to="home" replace />} />
         <Route path="*" element={<Navigate to="home" replace />} />
       </Routes>
@@ -521,20 +513,16 @@ function ScorerRouter({
   );
 }
 
-// --- Main App Component ---
 export default function App() {
   const [sessionChecked, setSessionChecked] = useState(false);
   const [currentUser, setCurrentUser] = useState<UserType | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
-
-  // State for passing volatile data between Scorer pages (MatchSetup -> LiveScoring)
   const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
   const [matchSetupData, setMatchSetupData] = useState<MatchSetupData | null>(
     null
   );
-
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -542,25 +530,19 @@ export default function App() {
       const {
         data: { session },
       } = await supabase.auth.getSession();
-      if (session?.user) {
-        await fetchAndSetUserProfile(session.user);
-      }
+      if (session?.user) await fetchAndSetUserProfile(session.user);
       setSessionChecked(true);
     };
-
     checkSessionAndProfile();
-
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) {
-        fetchAndSetUserProfile(session.user);
-      } else {
+      if (session?.user) fetchAndSetUserProfile(session.user);
+      else {
         setCurrentUser(null);
-        navigate("/", { replace: true }); // Redirect to login on logout/session end
+        navigate("/", { replace: true });
       }
     });
-
     return () => subscription.unsubscribe();
   }, []);
 
@@ -570,13 +552,11 @@ export default function App() {
       .select("role, name")
       .eq("id", authUser.id)
       .single();
-
     if (error) {
       toast.error("Could not fetch user profile.");
       await supabase.auth.signOut();
       return;
     }
-
     if (profile) {
       const user: UserType = {
         id: authUser.id,
@@ -585,8 +565,6 @@ export default function App() {
         role: profile.role as "admin" | "scorer",
       };
       setCurrentUser(user);
-
-      // Redirect based on role only if we're not already on a page for that role
       if (
         profile.role === "admin" &&
         !window.location.pathname.startsWith("/admin")
@@ -601,53 +579,35 @@ export default function App() {
     }
   };
 
-// In LoginPage component inside src/App.tsx
-
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    
     const { data, error } = await supabase.auth.signInWithPassword({
-      email: email,
-      password: password,
+      email,
+      password,
     });
-
     if (error) {
-      // Fix: Check if message exists, otherwise print the whole error code
-      console.error("Login error:", error);
-      setError(error.message || "Login failed. Please check console for details.");
-      
-      // If we hit a 503 here, it means the server is actually down
-      if (error.status === 503) {
-         setError("Server is waking up. Please wait 1 minute and try again.");
-      }
+      setError(error.message);
       return;
     }
-
-    if (data.user) {
-      // Manually fetch profile if onAuthStateChange doesn't trigger fast enough
-      // Note: This relies on the parent component's logic, typically you'd just wait for the listener
-    }
+    if (data.user) await fetchAndSetUserProfile(data.user);
   };
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
   };
 
-  if (!sessionChecked) {
+  if (!sessionChecked)
     return (
       <div className="min-h-screen flex items-center justify-center">
         <p>Loading...</p>
       </div>
     );
-  }
 
-  // --- Main Routing ---
   return (
     <>
       <Toaster position="top-right" />
       <Routes>
-        {/* Login/Unauthenticated Route */}
         <Route
           path="/"
           element={
@@ -665,8 +625,6 @@ export default function App() {
             )
           }
         />
-
-        {/* Authenticated Admin Routes */}
         {currentUser?.role === "admin" && (
           <Route
             path="/admin/*"
@@ -675,8 +633,6 @@ export default function App() {
             }
           />
         )}
-
-        {/* Authenticated Scorer Routes */}
         {currentUser?.role === "scorer" && (
           <Route
             path="/scorer/*"
@@ -692,8 +648,6 @@ export default function App() {
             }
           />
         )}
-
-        {/* Fallback Routes */}
         <Route
           path="*"
           element={
@@ -708,8 +662,6 @@ export default function App() {
   );
 }
 
-// --- Extracted Login Page Component ---
-// --- Extracted Login Page Component ---
 function LoginPage({
   email,
   setEmail,
@@ -725,17 +677,11 @@ function LoginPage({
   error: string | null;
   handleLogin: (e: React.FormEvent) => Promise<void>;
 }) {
-  // --- NEW: State for password visibility ---
   const [showPassword, setShowPassword] = useState(false);
-
-  // --- NEW: Function to toggle password visibility ---
-  const togglePasswordVisibility = () => {
-    setShowPassword((prev) => !prev);
-  };
+  const togglePasswordVisibility = () => setShowPassword((prev) => !prev);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-white relative overflow-hidden">
-      {/* ... (background elements) */}
       <div className="relative min-h-screen flex flex-col items-center justify-center p-4 md:p-8">
         <div className="mb-8 flex items-center justify-center">
           <div className="w-20 h-20 bg-blue-600 rounded-xl flex items-center justify-center text-white">
@@ -782,16 +728,13 @@ function LoginPage({
                   <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5 pointer-events-none" />
                   <Input
                     id="password"
-                    // --- UPDATED: Use state to determine type ---
                     type={showPassword ? "text" : "password"}
                     placeholder="Enter your password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    // --- UPDATED: Add padding for the button ---
                     className="pl-10 pr-10 h-12 bg-white border-gray-200 focus:border-blue-600 focus:ring-blue-600"
                     required
                   />
-                  {/* --- NEW: Toggle Button --- */}
                   <Button
                     type="button"
                     variant="ghost"

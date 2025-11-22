@@ -375,9 +375,6 @@ export function LiveScoringV4({
     
     // IMPORTANT: Don't automatically show the modal. 
     // Let the user see the "Set Batches" or "Use Previous" buttons.
-    // But we CAN set showBatchModal to true IF there are NO previous batches to help them out.
-    // For now, let's leave it manual to avoid confusion with the "Use Previous" button.
-    // setShowBatchModal(true); 
   }, [currentInning, currentTurn, match.innings]);
 
   useEffect(() => {
@@ -1095,6 +1092,7 @@ export function LiveScoringV4({
                      <p className="text-xs text-blue-800 text-center">Previous batch configuration available.</p>
                      <Button 
                        onClick={handleUsePreviousBatches}
+                       disabled={isOnBreak}
                        className="w-full bg-blue-600 hover:bg-blue-700 h-8 text-xs"
                      >
                        <History className="w-3 h-3 mr-2" />

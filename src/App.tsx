@@ -49,7 +49,6 @@ import { TurnByTurnResultView } from "./components/TurnByTurnResultView";
 
 // --- Helper Wrappers for Routing ---
 
-// Renders the CreateTournamentPage (for both create and edit modes)
 function TournamentEditorWrapper() {
   const { tournamentId } = useParams();
   const navigate = useNavigate();
@@ -64,7 +63,6 @@ function TournamentEditorWrapper() {
   );
 }
 
-// Renders the EditMatchPage
 function MatchEditorWrapper() {
   const { matchId } = useParams();
   const navigate = useNavigate();
@@ -80,7 +78,6 @@ function MatchEditorWrapper() {
   );
 }
 
-// Renders the EditTeamPage
 function TeamEditorWrapper() {
   const { teamId } = useParams();
   const navigate = useNavigate();
@@ -96,7 +93,6 @@ function TeamEditorWrapper() {
   );
 }
 
-// Renders MatchDetailsPage for a specific match
 function MatchResultWrapper() {
   const { matchId } = useParams<{ matchId: string }>();
   const navigate = useNavigate();
@@ -182,12 +178,10 @@ function MatchResultWrapper() {
   );
 }
 
-// Renders TournamentDetailsPage for a specific tournament
 function TournamentDetailsWrapper() {
   const { tournamentId } = useParams();
   const navigate = useNavigate();
   const onNavigate = (path: string) => navigate(path);
-  // In a real app, this would fetch the tournament details.
   const tournament = mockTournaments.find(
     (t) => t.id === tournamentId
   ) as unknown as Tournament;
@@ -204,7 +198,6 @@ function TournamentDetailsWrapper() {
   );
 }
 
-// Renders the MatchSetupEnhanced Page
 function MatchSetupWrapper({
   match,
   onBack,
@@ -217,16 +210,11 @@ function MatchSetupWrapper({
   const { matchId } = useParams();
   const navigate = useNavigate();
 
-  // If match is not set in state, look it up from mock data using URL param.
   const matchData = useMemo(() => {
     return match || mockMatches.find((m) => m.id === matchId);
   }, [match, matchId]);
 
-  // Guard clause if data is missing or user navigated directly
   if (!matchData) {
-    // Instead of just redirecting, we could try to fetch it here too,
-    // but for setup, it's usually safer to redirect back to home if context is lost.
-    // However, let's be lenient and redirect to home which now has auto-resume logic.
     toast.error("Match data is missing. Redirecting...");
     navigate("/scorer/home", { replace: true });
     return null;
@@ -241,7 +229,6 @@ function MatchSetupWrapper({
   );
 }
 
-// --- UPDATED: LiveScoringWrapper with Auto-Recovery ---
 function LiveScoringWrapper({
   match,
   setupData,
@@ -254,119 +241,17 @@ function LiveScoringWrapper({
   onBack: () => void;
 }) {
   const navigate = useNavigate();
-  const { matchId } = useParams<{ matchId: string }>();
-  
-  // Local state to hold fetched data if props are missing (Refresh scenario)
-  const [fetchedMatch, setFetchedMatch] = useState<Match | null>(match);
-  const [localSetup, setLocalSetup] = useState<MatchSetupData | null>(setupData);
-  const [isLoading, setIsLoading] = useState(!match || !setupData);
 
-  useEffect(() => {
-    const recoverState = async () => {
-      // If we already have data via props, stop loading
-      if (match && setupData) {
-        setIsLoading(false);
-        return;
-      }
-
-      if (!matchId) return;
-
-      try {
-        // 1. Recover Match Data from Supabase
-        if (!match) {
-          const { data, error } = await supabase
-            .from("matches")
-            .select(
-              `
-              *,
-              team_a:teams!matches_team_a_id_fkey(*, players!team_id(*)),
-              team_b:teams!matches_team_b_id_fkey(*, players!team_id(*)),
-              tournament:tournaments(*),
-              scorer:profiles(name)
-            `
-            )
-            .eq("id", matchId)
-            .single();
-
-          if (error || !data) throw new Error("Match not found");
-
-          const formattedMatch: Match = {
-            id: data.id,
-            matchNumber: data.match_number,
-            tournamentId: data.tournament.id,
-            tournamentName: data.tournament.name,
-            teamA: {
-              id: data.team_a.id,
-              name: data.team_a.name,
-              captain: data.team_a.captain_name,
-              players: data.team_a.players.map((p: any) => ({
-                ...p,
-                jerseyNumber: p.jersey_number,
-              })),
-            },
-            teamB: {
-              id: data.team_b.id,
-              name: data.team_b.name,
-              captain: data.team_b.captain_name,
-              players: data.team_b.players.map((p: any) => ({
-                ...p,
-                jerseyNumber: p.jersey_number,
-              })),
-            },
-            dateTime: data.match_datetime,
-            venue: data.venue,
-            status: data.status,
-            scoreA: data.score_a,
-            scoreB: data.score_b,
-            scorerName: data.scorer?.name || "Not Assigned",
-          };
-          setFetchedMatch(formattedMatch);
-        }
-
-        // 2. Recover Setup Data from LocalStorage
-        if (!setupData) {
-          const storedSetup = localStorage.getItem(`match_setup_${matchId}`);
-          if (storedSetup) {
-            setLocalSetup(JSON.parse(storedSetup));
-          } else {
-            // Critical Error: We have the match, but lost the Toss/Playing XI info
-            console.error("Setup data missing in local storage for match:", matchId);
-            toast.error("Match setup data missing. Please re-configure.");
-            // Redirect to setup so they can re-enter toss details
-            navigate(`/scorer/match/${matchId}/setup`);
-            return;
-          }
-        }
-      } catch (error) {
-        console.error("Recovery failed:", error);
-        toast.error("Failed to recover match session.");
-        navigate("/scorer/home");
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    recoverState();
-  }, [matchId, match, setupData, navigate]);
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-center">
-          <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-gray-600">Restoring match session...</p>
-        </div>
-      </div>
-    );
+  if (!match || !setupData) {
+    toast.error("Match setup incomplete. Redirecting...");
+    navigate("/scorer/home", { replace: true });
+    return null;
   }
-
-  // Ensure we have data before rendering
-  if (!fetchedMatch || (!localSetup && !setupData)) return null;
 
   return (
     <LiveScoringV4
-      match={fetchedMatch}
-      setupData={(localSetup || setupData)!}
+      match={match}
+      setupData={setupData}
       onBack={onBack}
       onEndMatch={onEndMatch}
     />
@@ -440,7 +325,6 @@ function AdminRouter({
 
   return (
     <AdminLayout
-      // Use pathname for highlighting the active link in the sidebar
       currentPage={location.pathname.split("/admin/")[1] || "home"}
       onNavigate={onNavigate}
       onLogout={onLogout}
@@ -485,8 +369,7 @@ function AdminRouter({
         <Route
           path="results/match/:matchId"
           element={<TurnByTurnResultView />}
-        />{" "}
-        {/* <-- ADD THIS */}
+        />
         <Route path="/" element={<Navigate to="home" replace />} />
         <Route path="*" element={<Navigate to="home" replace />} />
       </Routes>
@@ -522,28 +405,11 @@ function ScorerRouter({
 
   const handleStartMatch = (match: Match) => {
     setSelectedMatch(match);
-
-    // --- Routing Logic based on Status ---
-    if (match.status === "live") {
-      // Check if we have local data to resume
-      const savedSetup = localStorage.getItem(`match_setup_${match.id}`);
-      if (savedSetup) {
-        setMatchSetupData(JSON.parse(savedSetup));
-        navigate(`/scorer/match/${match.id}/live`);
-      } else {
-        // Match is live in DB but no local data? Force re-setup to be safe.
-        toast.warning("Resuming match setup...");
-        navigate(`/scorer/match/${match.id}/setup`);
-      }
-    } else {
-      // Upcoming -> Setup
-      navigate(`/scorer/match/${match.id}/setup`);
-    }
+    navigate(`/scorer/match/${match.id}/setup`);
   };
 
   const handleMatchSetupComplete = (setupData: MatchSetupData) => {
     setMatchSetupData(setupData);
-    // Use match ID in the URL to retain context on refresh
     navigate(`/scorer/match/${selectedMatch?.id}/live`);
   };
 
@@ -553,7 +419,6 @@ function ScorerRouter({
     let scoreA = 0;
     let scoreB = 0;
 
-    // Calculate points based on the scoring team's ID
     actions.forEach((action) => {
       const scoringId = (action as any).scoring_team_id || action.scoringTeamId;
 
@@ -576,18 +441,9 @@ function ScorerRouter({
     if (error) {
       toast.error(`Failed to end match: ${error.message}`);
     } else {
-      // Update the local match object scores before redirecting to ensure the UI updates if necessary
       selectedMatch.scoreA = scoreA;
       selectedMatch.scoreB = scoreB;
       selectedMatch.status = "finished";
-      
-      // CLEANUP: Remove persistence data
-      localStorage.removeItem(`match_setup_${selectedMatch.id}`);
-      localStorage.removeItem(`match_timer_${selectedMatch.id}`);
-      localStorage.removeItem(`match_batches_${selectedMatch.id}`);
-      localStorage.removeItem(`match_active_batch_idx_${selectedMatch.id}`);
-      localStorage.removeItem(`match_batches_confirmed_${selectedMatch.id}`);
-
       toast.success("Match has been successfully ended and results are saved.");
       onBackFromScoring();
     }
@@ -646,7 +502,6 @@ function ScorerRouter({
   );
 }
 
-// --- Main App Component ---
 export default function App() {
   const [sessionChecked, setSessionChecked] = useState(false);
   const [currentUser, setCurrentUser] = useState<UserType | null>(null);
@@ -654,7 +509,6 @@ export default function App() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  // State for passing volatile data between Scorer pages (MatchSetup -> LiveScoring)
   const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
   const [matchSetupData, setMatchSetupData] = useState<MatchSetupData | null>(
     null
@@ -682,7 +536,7 @@ export default function App() {
         fetchAndSetUserProfile(session.user);
       } else {
         setCurrentUser(null);
-        navigate("/", { replace: true }); // Redirect to login on logout/session end
+        navigate("/", { replace: true });
       }
     });
 
@@ -711,11 +565,16 @@ export default function App() {
       };
       setCurrentUser(user);
 
-      // Redirect based on role only if we're not already on a page for that role
-      // Add exception for login page
-      if (window.location.pathname === '/') {
-         if (profile.role === "admin") navigate("/admin/home", { replace: true });
-         else navigate("/scorer/home", { replace: true });
+      if (
+        profile.role === "admin" &&
+        !window.location.pathname.startsWith("/admin")
+      ) {
+        navigate("/admin/home", { replace: true });
+      } else if (
+        profile.role === "scorer" &&
+        !window.location.pathname.startsWith("/scorer")
+      ) {
+        navigate("/scorer/home", { replace: true });
       }
     }
   };
@@ -748,12 +607,10 @@ export default function App() {
     );
   }
 
-  // --- Main Routing ---
   return (
     <>
       <Toaster position="top-right" />
       <Routes>
-        {/* Login/Unauthenticated Route */}
         <Route
           path="/"
           element={
@@ -772,7 +629,6 @@ export default function App() {
           }
         />
 
-        {/* Authenticated Admin Routes */}
         {currentUser?.role === "admin" && (
           <Route
             path="/admin/*"
@@ -782,7 +638,6 @@ export default function App() {
           />
         )}
 
-        {/* Authenticated Scorer Routes */}
         {currentUser?.role === "scorer" && (
           <Route
             path="/scorer/*"
@@ -799,7 +654,6 @@ export default function App() {
           />
         )}
 
-        {/* Fallback Routes */}
         <Route
           path="*"
           element={
@@ -814,7 +668,6 @@ export default function App() {
   );
 }
 
-// --- Extracted Login Page Component ---
 function LoginPage({
   email,
   setEmail,
@@ -838,7 +691,6 @@ function LoginPage({
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-white relative overflow-hidden">
-      {/* ... (background elements) */}
       <div className="relative min-h-screen flex flex-col items-center justify-center p-4 md:p-8">
         <div className="mb-8 flex items-center justify-center">
           <div className="w-20 h-20 bg-blue-600 rounded-xl flex items-center justify-center text-white">

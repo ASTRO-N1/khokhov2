@@ -1,5 +1,3 @@
-// design/src/components/scorer/BatchSelectionModal.tsx
-
 import React, { useState, useMemo, useEffect } from "react";
 import { Player } from "../../types";
 import { Button } from "../ui/button";
@@ -322,37 +320,49 @@ export function BatchSelectionModal({
 
         {/* Footer with Actions */}
         <div className="p-4 border-t bg-gray-50 sticky bottom-0 z-10 flex justify-between items-center">
-          {isReadOnly ? (
-            <div /> // Placeholder to keep Confirm button on the right
-          ) : (
+          <div>
+            {!isReadOnly && (
+              <Button
+                variant="outline"
+                onClick={handleReset}
+                disabled={selectedPlayerIds.length === 0}
+              >
+                <RotateCcw className="w-4 h-4 mr-2" />
+                Reset
+              </Button>
+            )}
+          </div>
+
+          <div className="flex gap-3 items-center">
+            {!isReadOnly && (
+              <Button
+                variant="ghost"
+                onClick={onCancel}
+                className="text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+              >
+                Cancel
+              </Button>
+            )}
             <Button
-              variant="outline"
-              onClick={handleReset}
-              disabled={selectedPlayerIds.length === 0}
+              onClick={handleConfirmBatches}
+              disabled={!isSelectionComplete && !isReadOnly} // Disable confirm unless complete or read-only
+              className={cn(
+                "px-6 py-2.5",
+                isReadOnly
+                  ? "bg-gray-500 hover:bg-gray-600"
+                  : "bg-blue-600 hover:bg-blue-700"
+              )}
             >
-              <RotateCcw className="w-4 h-4 mr-2" />
-              Reset
+              {isReadOnly ? (
+                "Close"
+              ) : (
+                <>
+                  <Check className="w-5 h-5 mr-2" />
+                  Confirm Batches
+                </>
+              )}
             </Button>
-          )}
-          <Button
-            onClick={handleConfirmBatches}
-            disabled={!isSelectionComplete && !isReadOnly} // Disable confirm unless complete or read-only
-            className={cn(
-              "px-6 py-2.5",
-              isReadOnly
-                ? "bg-gray-500 hover:bg-gray-600"
-                : "bg-blue-600 hover:bg-blue-700"
-            )}
-          >
-            {isReadOnly ? (
-              "Close"
-            ) : (
-              <>
-                <Check className="w-5 h-5 mr-2" />
-                Confirm Batches
-              </>
-            )}
-          </Button>
+          </div>
         </div>
       </Card>
     </div>

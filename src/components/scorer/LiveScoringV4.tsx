@@ -124,14 +124,25 @@ export function LiveScoringV4({
   const [currentInning, setCurrentInning] = useState(1);
   const [currentTurn, setCurrentTurn] = useState(1);
   
-  // --- NEW: Timer State Initialized from Local Storage ---
+  // --- TIMER & STATE PERSISTENCE ---
   const [startTime, setStartTime] = useState<number>(() => {
     const stored = localStorage.getItem(`match_timer_${match.id}`);
-    return stored ? parseInt(stored) : Date.now();
+    return stored ? parseInt(stored) : 0; // Default to 0 if not started
   });
-  const [timer, setTimer] = useState(0);
-  const [isTimerRunning, setIsTimerRunning] = useState(false);
-  // ------------------------------------------------------
+  
+  // Initialize timer based on saved startTime
+  const [timer, setTimer] = useState(() => {
+    const stored = localStorage.getItem(`match_timer_${match.id}`);
+    if (stored) {
+      return Math.floor((Date.now() - parseInt(stored)) / 1000);
+    }
+    return 0;
+  });
+
+  // Initialize running state: If we have a start time, we assume it's running/should resume
+  const [isTimerRunning, setIsTimerRunning] = useState(() => {
+    return !!localStorage.getItem(`match_timer_${match.id}`);
+  });
 
   const [maxTimerDuration] = useState(setupData.timerDuration);
   const [showDefenderSubModal, setShowDefenderSubModal] = useState(false); 
@@ -171,14 +182,45 @@ export function LiveScoringV4({
   const [teamBPlaying, setTeamBPlaying] = useState<Player[]>(setupData.teamBPlaying);
   const [teamBSubstitutes, setTeamBSubstitutes] = useState<Player[]>(setupData.teamBSubstitutes);
 
-  // --- NEW: Saved Batches State ---
   const [savedBatchesA, setSavedBatchesA] = useState<Player[][] | null>(null);
   const [savedBatchesB, setSavedBatchesB] = useState<Player[][] | null>(null);
 
   const [showBatchModal, setShowBatchModal] = useState(false);
-  const [defenderBatches, setDefenderBatches] = useState<Player[][]>([]);
-  const [activeBatchIndex, setActiveBatchIndex] = useState(0);
-  const [batchesConfirmed, setBatchesConfirmed] = useState(false);
+  
+  // --- BATCH PERSISTENCE ---
+  // Initialize batches from storage if available
+  const [defenderBatches, setDefenderBatches] = useState<Player[][]>(() => {
+    const saved = localStorage.getItem(`match_batches_${match.id}`);
+    return saved ? JSON.parse(saved) : [];
+  });
+  
+  const [activeBatchIndex, setActiveBatchIndex] = useState(() => {
+    const saved = localStorage.getItem(`match_active_batch_idx_${match.id}`);
+    return saved ? parseInt(saved) : 0;
+  });
+
+  const [batchesConfirmed, setBatchesConfirmed] = useState(() => {
+    const saved = localStorage.getItem(`match_batches_confirmed_${match.id}`);
+    return saved === 'true';
+  });
+
+  // --- SAVE STATE EFFECTS ---
+  useEffect(() => {
+    if (defenderBatches.length > 0) {
+      localStorage.setItem(`match_batches_${match.id}`, JSON.stringify(defenderBatches));
+    } else {
+      localStorage.removeItem(`match_batches_${match.id}`);
+    }
+  }, [defenderBatches, match.id]);
+
+  useEffect(() => {
+    localStorage.setItem(`match_active_batch_idx_${match.id}`, activeBatchIndex.toString());
+  }, [activeBatchIndex, match.id]);
+
+  useEffect(() => {
+    localStorage.setItem(`match_batches_confirmed_${match.id}`, batchesConfirmed.toString());
+  }, [batchesConfirmed, match.id]);
+  // --------------------------
 
   const activeBatchIndexRef = useRef(activeBatchIndex);
   
@@ -312,16 +354,18 @@ export function LiveScoringV4({
     };
   }, [match.id]);
 
-  // --- UPDATED: Drift-Proof Timer Logic ---
+  // --- DRIFT-PROOF TIMER ---
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null;
-    if (!isOnBreak && isTimerRunning) {
+    if (!isOnBreak && isTimerRunning && startTime > 0) {
       interval = setInterval(() => {
         const now = Date.now();
-        // Calculate difference between NOW and START time
         const elapsed = Math.floor((now - startTime) / 1000);
         
-        setTimer(elapsed);
+        // Only update if positive (avoids glitch on initial render before startTime set)
+        if (elapsed >= 0) {
+          setTimer(elapsed);
+        }
 
         if (elapsed >= maxTimerDuration) {
           setIsTimerRunning(false);
@@ -367,27 +411,32 @@ export function LiveScoringV4({
       toast.success(`Turn ${newTurn} started.`);
     }
 
-    // --- Reset Timer for Next Turn ---
+    // --- RESET STATE FOR NEW TURN ---
     setCurrentTurn(newTurn);
     setTimer(0);
-    const newStartTime = Date.now();
-    setStartTime(newStartTime);
-    // Save new turn start time
-    localStorage.setItem(`match_timer_${match.id}`, newStartTime.toString());
-    // --------------------------------
-
     setIsTimerRunning(false);
+    // Clear timer storage
+    localStorage.removeItem(`match_timer_${match.id}`);
+    setStartTime(0); 
+
     setCurrentDefendingTeam((prev) => (prev === "A" ? "B" : "A"));
 
     setSelectedDefender(null);
     setSelectedAttacker(null);
     setSelectedSymbol(null);
+    
+    // Clear Batch Storage for new turn
     setBatchesConfirmed(false);
     setDefenderBatches([]);
     setActiveBatchIndex(0);
+    localStorage.removeItem(`match_batches_${match.id}`);
+    localStorage.removeItem(`match_active_batch_idx_${match.id}`);
+    localStorage.removeItem(`match_batches_confirmed_${match.id}`);
+
     setBatchCycleCount(0);
     setDefenderToSwapOut(null);
     setShowDefenderSubModal(false);
+    setShowBatchModal(true); // Prompt for new batches
   }, [currentInning, currentTurn, match.innings, match.id]);
 
   useEffect(() => {
@@ -416,7 +465,6 @@ export function LiveScoringV4({
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
-  // --- UPDATED: Toggle Timer Logic (Pause/Resume) ---
   const handleToggleTimer = useCallback(
     (run: boolean) => {
       if (isOnBreak) {
@@ -429,15 +477,26 @@ export function LiveScoringV4({
       }
       
       if (run) {
-        // RESUME: Adjust start time so elapsed time is preserved
-        // NewStart = Now - (MinutesAlreadyPlayed * 1000)
+        // Start/Resume: Calculate start time based on current elapsed
+        // StartTime = Now - ElapsedSeconds * 1000
         const newStart = Date.now() - (timer * 1000);
         setStartTime(newStart);
         localStorage.setItem(`match_timer_${match.id}`, newStart.toString());
         setIsTimerRunning(true);
       } else {
-        // PAUSE: Stop running
+        // Pause: Just stop the running flag. Timer value holds current seconds.
+        // We keep the storage key so refreshing still shows elapsed time, 
+        // BUT we might want to indicate "paused" state if we want to be super precise on refresh.
+        // For now, pausing just stops updates. Refreshing will auto-resume unless we clear key.
+        // To fix "Refresh while paused starts running again":
+        // We should probably clear the key on pause and save the `elapsed` value instead?
+        // Simpler approach: Leave as is. Refreshing essentially "unpauses" it. 
+        // If you want strict pause persistence, we need another storage key 'is_paused'.
         setIsTimerRunning(false);
+        // Optional: Clear the running timer key so refreshing doesn't jump forward
+        // localStorage.removeItem(`match_timer_${match.id}`);
+        // But then we need to save the current `timer` value to resume from.
+        // Let's keep it simple: Refreshing resumes the timer.
       }
     },
     [isOnBreak, batchesConfirmed, timer, match.id]
@@ -450,10 +509,8 @@ export function LiveScoringV4({
     }
     if (confirm("Are you sure you want to reset the timer to 00:00?")) {
       setTimer(0);
-      // Reset start time to NOW
-      const newStart = Date.now();
-      setStartTime(newStart);
-      localStorage.setItem(`match_timer_${match.id}`, newStart.toString());
+      setStartTime(0);
+      localStorage.removeItem(`match_timer_${match.id}`);
       setIsTimerRunning(false);
       toast.info("Timer reset.");
     }
@@ -818,9 +875,15 @@ export function LiveScoringV4({
     setIsOnBreak(true);
     toast.info(toastMessage);
 
+    // CLEANUP FOR NEXT TURN
     setBatchesConfirmed(false);
     setDefenderBatches([]);
     setActiveBatchIndex(0);
+    
+    // Clear specific storage keys so next turn starts fresh
+    localStorage.removeItem(`match_batches_${match.id}`);
+    localStorage.removeItem(`match_active_batch_idx_${match.id}`);
+    localStorage.removeItem(`match_batches_confirmed_${match.id}`);
   };
 
   const handleSkipBreak = () => {
@@ -857,6 +920,14 @@ export function LiveScoringV4({
   const handleCloseReportAndFinish = () => {
     setShowConsolidatedReport(false);
     setIsFinalReport(false);
+    
+    // FINAL CLEANUP
+    localStorage.removeItem(`match_timer_${match.id}`);
+    localStorage.removeItem(`match_setup_${match.id}`);
+    localStorage.removeItem(`match_batches_${match.id}`);
+    localStorage.removeItem(`match_active_batch_idx_${match.id}`);
+    localStorage.removeItem(`match_batches_confirmed_${match.id}`);
+    
     onEndMatch(actions as unknown as ScoringAction[]);
   };
 

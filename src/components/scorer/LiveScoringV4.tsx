@@ -12,7 +12,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "../ui/alert-dialog";
-import { RefreshCw, Ban, Users, Check, RotateCcw, History } from "lucide-react";
+import { RefreshCw, Ban, Users, Check } from "lucide-react";
 import { Match, Player, ScoringAction, SymbolType } from "../../types";
 import { MatchSetupData } from "./MatchSetupEnhanced";
 import { toast } from "sonner";
@@ -123,15 +123,18 @@ export function LiveScoringV4({
 }: LiveScoringV4Props) {
   const [currentInning, setCurrentInning] = useState(1);
   const [currentTurn, setCurrentTurn] = useState(1);
+  
+  // --- NEW: Timer State Initialized from Local Storage ---
+  const [startTime, setStartTime] = useState<number>(() => {
+    const stored = localStorage.getItem(`match_timer_${match.id}`);
+    return stored ? parseInt(stored) : Date.now();
+  });
   const [timer, setTimer] = useState(0);
   const [isTimerRunning, setIsTimerRunning] = useState(false);
+  // ------------------------------------------------------
+
   const [maxTimerDuration] = useState(setupData.timerDuration);
-
-  // New: Memory for Saved Batches
-  const [savedBatchesA, setSavedBatchesA] = useState<Player[][] | null>(null);
-  const [savedBatchesB, setSavedBatchesB] = useState<Player[][] | null>(null);
-
-  const [showDefenderSubModal, setShowDefenderSubModal] = useState(false);
+  const [showDefenderSubModal, setShowDefenderSubModal] = useState(false); 
   const [defenderToSwapOut, setDefenderToSwapOut] = useState<Player | null>(null);
   const [teamADefenderSubUsed, setTeamADefenderSubUsed] = useState<{ [inning: number]: boolean }>({});
   const [teamBDefenderSubUsed, setTeamBDefenderSubUsed] = useState<{ [inning: number]: boolean }>({});
@@ -167,6 +170,10 @@ export function LiveScoringV4({
   const [teamASubstitutes, setTeamASubstitutes] = useState<Player[]>(setupData.teamASubstitutes);
   const [teamBPlaying, setTeamBPlaying] = useState<Player[]>(setupData.teamBPlaying);
   const [teamBSubstitutes, setTeamBSubstitutes] = useState<Player[]>(setupData.teamBSubstitutes);
+
+  // --- NEW: Saved Batches State ---
+  const [savedBatchesA, setSavedBatchesA] = useState<Player[][] | null>(null);
+  const [savedBatchesB, setSavedBatchesB] = useState<Player[][] | null>(null);
 
   const [showBatchModal, setShowBatchModal] = useState(false);
   const [defenderBatches, setDefenderBatches] = useState<Player[][]>([]);
@@ -305,26 +312,28 @@ export function LiveScoringV4({
     };
   }, [match.id]);
 
+  // --- UPDATED: Drift-Proof Timer Logic ---
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null;
-    if (!isOnBreak && isTimerRunning && timer < maxTimerDuration) {
+    if (!isOnBreak && isTimerRunning) {
       interval = setInterval(() => {
-        setTimer((prev) => {
-          const newTime = prev + 1;
-          if (newTime >= maxTimerDuration) {
-            setIsTimerRunning(false);
-            toast.warning("⏰ Turn Over! Time limit reached", { duration: 3000 });
-            handleNextTurn(true);
-            return maxTimerDuration;
-          }
-          return newTime;
-        });
+        const now = Date.now();
+        // Calculate difference between NOW and START time
+        const elapsed = Math.floor((now - startTime) / 1000);
+        
+        setTimer(elapsed);
+
+        if (elapsed >= maxTimerDuration) {
+          setIsTimerRunning(false);
+          toast.warning("⏰ Turn Over! Time limit reached", { duration: 3000 });
+          handleNextTurn(true);
+        }
       }, 1000);
     }
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isTimerRunning, timer, maxTimerDuration, isOnBreak]);
+  }, [isTimerRunning, startTime, maxTimerDuration, isOnBreak]);
 
   const startNextTurnActual = useCallback(() => {
     setIsOnBreak(false);
@@ -358,8 +367,15 @@ export function LiveScoringV4({
       toast.success(`Turn ${newTurn} started.`);
     }
 
+    // --- Reset Timer for Next Turn ---
     setCurrentTurn(newTurn);
     setTimer(0);
+    const newStartTime = Date.now();
+    setStartTime(newStartTime);
+    // Save new turn start time
+    localStorage.setItem(`match_timer_${match.id}`, newStartTime.toString());
+    // --------------------------------
+
     setIsTimerRunning(false);
     setCurrentDefendingTeam((prev) => (prev === "A" ? "B" : "A"));
 
@@ -372,10 +388,7 @@ export function LiveScoringV4({
     setBatchCycleCount(0);
     setDefenderToSwapOut(null);
     setShowDefenderSubModal(false);
-    
-    // IMPORTANT: Don't automatically show the modal. 
-    // Let the user see the "Set Batches" or "Use Previous" buttons.
-  }, [currentInning, currentTurn, match.innings]);
+  }, [currentInning, currentTurn, match.innings, match.id]);
 
   useEffect(() => {
     let breakInterval: NodeJS.Timeout | null = null;
@@ -403,6 +416,7 @@ export function LiveScoringV4({
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
+  // --- UPDATED: Toggle Timer Logic (Pause/Resume) ---
   const handleToggleTimer = useCallback(
     (run: boolean) => {
       if (isOnBreak) {
@@ -413,9 +427,20 @@ export function LiveScoringV4({
         toast.error("Please set defender batches before starting the timer.");
         return;
       }
-      setIsTimerRunning(run);
+      
+      if (run) {
+        // RESUME: Adjust start time so elapsed time is preserved
+        // NewStart = Now - (MinutesAlreadyPlayed * 1000)
+        const newStart = Date.now() - (timer * 1000);
+        setStartTime(newStart);
+        localStorage.setItem(`match_timer_${match.id}`, newStart.toString());
+        setIsTimerRunning(true);
+      } else {
+        // PAUSE: Stop running
+        setIsTimerRunning(false);
+      }
     },
-    [isOnBreak, batchesConfirmed]
+    [isOnBreak, batchesConfirmed, timer, match.id]
   );
 
   const handleResetTimer = useCallback(() => {
@@ -425,10 +450,14 @@ export function LiveScoringV4({
     }
     if (confirm("Are you sure you want to reset the timer to 00:00?")) {
       setTimer(0);
+      // Reset start time to NOW
+      const newStart = Date.now();
+      setStartTime(newStart);
+      localStorage.setItem(`match_timer_${match.id}`, newStart.toString());
       setIsTimerRunning(false);
       toast.info("Timer reset.");
     }
-  }, [isOnBreak]);
+  }, [isOnBreak, match.id]);
 
   const handleDefenderSelect = (defender: Player) => {
     if (activeDefenders.some((ad) => ad.id === defender.id)) {

@@ -61,27 +61,26 @@ const ACTION_CONFIG: Record<
 
 export function LiveMatchPage({ match, onBack }: LiveMatchPageProps) {
   const [currentTime, setCurrentTime] = useState(0);
-  // Local state to track precise timer values from DB
   const [timerState, setTimerState] = useState({
     value: 0,
-    status: "stopped", // 'running' | 'paused' | 'break' | 'stopped'
+    status: "stopped",
     lastUpdated: Date.now(),
   });
 
   const isLive = match.status?.toLowerCase() === "live";
-  const actions = match.actions || [];
+  // Sort actions to show newest first
+  const actions = match.actions ? [...match.actions].reverse() : [];
 
-  // --- 1. REALTIME DB SYNC (Timer & Status) ---
+  // 1. SYNC WITH DB
   useEffect(() => {
-    // Always fetch initial state, even if not live (to show correct final time/status)
     const fetchTimerState = async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("matches")
         .select("timer_value, timer_status, updated_at")
         .eq("id", match.id)
         .single();
 
-      if (data) {
+      if (data && !error) {
         setTimerState({
           value: data.timer_value || 0,
           status: data.timer_status || "stopped",
@@ -91,9 +90,11 @@ export function LiveMatchPage({ match, onBack }: LiveMatchPageProps) {
         });
       }
     };
+
+    // Initial fetch
     fetchTimerState();
 
-    // Subscribe to changes
+    // Realtime subscription
     const subscription = supabase
       .channel(`match-viewer-${match.id}`)
       .on(
@@ -122,40 +123,39 @@ export function LiveMatchPage({ match, onBack }: LiveMatchPageProps) {
     };
   }, [match.id]);
 
-  // --- 2. LOCAL CLOCK TICKER ---
+  // 2. TICKER LOGIC
   useEffect(() => {
-    let interval: NodeJS.Timeout;
-
-    const updateLocalTime = () => {
+    // Immediately update display based on new state before interval kicks in
+    const updateDisplayTime = () => {
       const now = Date.now();
-      // Calculate seconds elapsed since the last DB update
       const diff = Math.floor((now - timerState.lastUpdated) / 1000);
 
+      // Sanity check: If diff is huge (e.g. computer sleep), cap it or trust server?
+      // trusting calculation for now.
+
       if (timerState.status === "running") {
-        // Count UP for match time
         setCurrentTime(timerState.value + diff);
       } else if (timerState.status === "break") {
-        // Count DOWN for break time
         setCurrentTime(Math.max(0, timerState.value - diff));
       } else {
-        // Static for paused/stopped
         setCurrentTime(timerState.value);
       }
     };
 
-    // Run immediately and then set interval
-    updateLocalTime();
+    updateDisplayTime(); // Update immediately on state change
 
+    let interval: NodeJS.Timeout;
     if (timerState.status === "running" || timerState.status === "break") {
-      interval = setInterval(updateLocalTime, 1000);
+      interval = setInterval(updateDisplayTime, 1000);
     }
 
     return () => clearInterval(interval);
   }, [timerState]);
 
   const formatTimer = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
+    const safeSeconds = Math.max(0, seconds);
+    const mins = Math.floor(safeSeconds / 60);
+    const secs = safeSeconds % 60;
     return `${mins.toString().padStart(2, "0")}:${secs
       .toString()
       .padStart(2, "0")}`;
@@ -170,10 +170,10 @@ export function LiveMatchPage({ match, onBack }: LiveMatchPageProps) {
     });
   };
 
-  // --- 3. STATS CALCULATION ---
   const { attackerSummary } = useMemo(() => {
     const attStats: Record<string, any> = {};
-
+    // Use the reversed actions list for display, but we need raw list for calculation if we want
+    // Actually, order doesn't matter for stats.
     actions.forEach((action: any) => {
       if (action.attackerJersey && action.attackerName) {
         const key = `${action.attackerJersey}-${action.attackerName}`;
@@ -195,8 +195,7 @@ export function LiveMatchPage({ match, onBack }: LiveMatchPageProps) {
     };
   }, [actions]);
 
-  const lastAction = actions.length > 0 ? actions[actions.length - 1] : null;
-  const reversedActions = [...actions].reverse();
+  const lastAction = actions.length > 0 ? actions[0] : null; // actions is already reversed
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-white p-4 md:p-6">
@@ -211,7 +210,6 @@ export function LiveMatchPage({ match, onBack }: LiveMatchPageProps) {
 
         {/* SCOREBOARD */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {/* Team A */}
           <Card className="bg-blue-50 border-blue-200 border-2">
             <CardContent className="p-4 md:p-6 text-center">
               <p className="text-sm text-gray-600 mb-1 font-bold">
@@ -228,7 +226,6 @@ export function LiveMatchPage({ match, onBack }: LiveMatchPageProps) {
           <Card className="border-2 border-gray-200 bg-white">
             <CardContent className="p-4 md:p-6 text-center">
               <div className="flex items-center justify-center gap-2 mb-2">
-                {/* Show Badges based on precise timer state from DB */}
                 {timerState.status === "running" && (
                   <Badge className="bg-red-100 text-red-700 border-red-200 animate-pulse">
                     LIVE
@@ -244,13 +241,14 @@ export function LiveMatchPage({ match, onBack }: LiveMatchPageProps) {
                     <Coffee className="w-3 h-3" /> BREAK
                   </Badge>
                 )}
-                {match.status === "finished" && (
-                  <Badge className="bg-gray-100 text-gray-700 border-gray-200">
-                    FINISHED
-                  </Badge>
-                )}
+                {(match.status === "finished" ||
+                  timerState.status === "stopped") &&
+                  !isLive && (
+                    <Badge className="bg-gray-100 text-gray-700 border-gray-200">
+                      FINISHED
+                    </Badge>
+                  )}
               </div>
-
               <p className="text-5xl text-gray-900 mb-1 font-mono">
                 {formatTimer(currentTime)}
               </p>
@@ -261,7 +259,6 @@ export function LiveMatchPage({ match, onBack }: LiveMatchPageProps) {
             </CardContent>
           </Card>
 
-          {/* Team B */}
           <Card className="bg-purple-50 border-purple-200 border-2">
             <CardContent className="p-4 md:p-6 text-center">
               <p className="text-sm text-gray-600 mb-1 font-bold">
@@ -298,9 +295,8 @@ export function LiveMatchPage({ match, onBack }: LiveMatchPageProps) {
           </Card>
         )}
 
-        {/* FEED & STATS */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Feed - FIXED OVERFLOW */}
+          {/* Feed */}
           <div className="lg:col-span-2">
             <Card className="border-gray-200 h-[600px] flex flex-col overflow-hidden">
               <CardHeader className="pb-3 border-b border-gray-100 shrink-0">
@@ -311,62 +307,63 @@ export function LiveMatchPage({ match, onBack }: LiveMatchPageProps) {
               <CardContent className="flex-1 p-0 min-h-0 overflow-hidden">
                 <ScrollArea className="h-full w-full">
                   <div className="p-4 space-y-4">
-                    {reversedActions.map((event: any, index: number) => {
-                      const config = ACTION_CONFIG[event.symbol] || {
-                        icon: Circle,
-                        color: "text-gray-600",
-                        label: event.symbol,
-                      };
-                      const Icon = config.icon;
-                      return (
-                        <div
-                          key={index}
-                          className="flex items-start gap-3 pb-4 border-b border-gray-50 last:border-0"
-                        >
+                    {actions.length === 0 ? (
+                      <div className="text-center py-20 text-gray-400">
+                        Match has just started. Waiting for action...
+                      </div>
+                    ) : (
+                      actions.map((event: any, index: number) => {
+                        const config = ACTION_CONFIG[event.symbol] || {
+                          icon: Circle,
+                          color: "text-gray-600",
+                          label: event.symbol,
+                        };
+                        const Icon = config.icon;
+                        return (
                           <div
-                            className={`flex-shrink-0 w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center ${config.color}`}
+                            key={index}
+                            className="flex items-start gap-3 pb-4 border-b border-gray-50 last:border-0"
                           >
-                            <Icon className="w-5 h-5" />
-                          </div>
-                          <div className="flex-1">
-                            <div className="flex items-center justify-between mb-1">
-                              <span
-                                className={`text-sm font-bold ${config.color}`}
-                              >
-                                {config.label}
-                              </span>
-                              <span className="text-xs text-gray-400">
-                                {formatActionTime(event.timestamp)}
-                              </span>
+                            <div
+                              className={`flex-shrink-0 w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center ${config.color}`}
+                            >
+                              <Icon className="w-5 h-5" />
                             </div>
-                            <div className="text-sm text-gray-700">
-                              <span className="font-medium">
-                                {event.attackerName}
-                              </span>
-                              {event.defenderName && (
-                                <>
-                                  <span className="mx-1 text-gray-400">
-                                    targeted
-                                  </span>
-                                  <span className="font-medium">
-                                    {event.defenderName}
-                                  </span>
-                                </>
+                            <div className="flex-1">
+                              <div className="flex items-center justify-between mb-1">
+                                <span
+                                  className={`text-sm font-bold ${config.color}`}
+                                >
+                                  {config.label}
+                                </span>
+                                <span className="text-xs text-gray-400">
+                                  {formatActionTime(event.timestamp)}
+                                </span>
+                              </div>
+                              <div className="text-sm text-gray-700">
+                                <span className="font-medium">
+                                  {event.attackerName}
+                                </span>
+                                {event.defenderName && (
+                                  <>
+                                    <span className="mx-1 text-gray-400">
+                                      targeted
+                                    </span>
+                                    <span className="font-medium">
+                                      {event.defenderName}
+                                    </span>
+                                  </>
+                                )}
+                              </div>
+                              {event.points > 0 && (
+                                <Badge className="mt-1 bg-red-100 text-red-700 border-red-200">
+                                  + {event.points} PTS
+                                </Badge>
                               )}
                             </div>
-                            {event.points > 0 && (
-                              <Badge className="mt-1 bg-red-100 text-red-700 border-red-200">
-                                + {event.points} PTS
-                              </Badge>
-                            )}
                           </div>
-                        </div>
-                      );
-                    })}
-                    {reversedActions.length === 0 && (
-                      <div className="text-center py-20 text-gray-400">
-                        Match has just started. Waiting for first action...
-                      </div>
+                        );
+                      })
                     )}
                   </div>
                 </ScrollArea>
@@ -374,7 +371,7 @@ export function LiveMatchPage({ match, onBack }: LiveMatchPageProps) {
             </Card>
           </div>
 
-          {/* Top Attackers Panel */}
+          {/* Top Attackers */}
           <div className="space-y-4">
             <Card className="border-gray-200">
               <CardHeader className="pb-2">

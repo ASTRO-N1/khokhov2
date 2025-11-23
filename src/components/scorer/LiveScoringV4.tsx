@@ -1144,7 +1144,7 @@ export function LiveScoringV4({
   };
 
   const confirmEndMatch = async () => {
-    // 1. UPDATE DB IMMEDIATELY
+    // 1. UPDATE DB IMMEDIATELY (Viewers see "Finished")
     await updateMatchStatusToFinished();
 
     // 2. CLEAR LOCAL STORAGE
@@ -1174,17 +1174,19 @@ export function LiveScoringV4({
     setIsTimerRunning(false);
     setShowEndMatchConfirm(false);
 
-    // 3. Trigger Parent callback immediately so the user is navigated away
-    // or the UI updates instantly. We pass the current actions state.
-    onEndMatch(actions as unknown as ScoringAction[]);
-
-    // Optionally show the report modal if you want them to see it before navigating away
+    // 3. Show the Report Modal (Do NOT navigate away yet)
     setIsFinalReport(true);
     setShowConsolidatedReport(true);
   };
 
   const handleCloseReport = () => {
     setShowConsolidatedReport(false);
+
+    // 4. Navigate ONLY after closing the final report
+    if (isFinalReport) {
+      onEndMatch(actions as unknown as ScoringAction[]);
+    }
+
     setIsFinalReport(false);
   };
 

@@ -63,30 +63,33 @@ export function LiveMatchPage({ match, onBack }: LiveMatchPageProps) {
   const [currentTime, setCurrentTime] = useState(0);
   const [timerState, setTimerState] = useState({
     value: 0,
-    status: "stopped",
+    status: "stopped", // 'running' | 'paused' | 'break' | 'stopped'
     lastUpdated: Date.now(),
+    isLiveUpdate: false, // Flag to track if the update came from a subscription
   });
 
   const isLive = match.status?.toLowerCase() === "live";
   // Sort actions to show newest first
   const actions = match.actions ? [...match.actions].reverse() : [];
 
-  // 1. SYNC WITH DB
+  // --- 1. REALTIME DB SYNC (Timer & Status) ---
   useEffect(() => {
     const fetchTimerState = async () => {
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from("matches")
         .select("timer_value, timer_status, updated_at")
         .eq("id", match.id)
         .single();
 
-      if (data && !error) {
+      if (data) {
         setTimerState({
           value: data.timer_value || 0,
           status: data.timer_status || "stopped",
+          // For initial load, we must trust the DB timestamp, but clamp it later to avoid negative diffs
           lastUpdated: data.updated_at
             ? new Date(data.updated_at).getTime()
             : Date.now(),
+          isLiveUpdate: false,
         });
       }
     };
@@ -110,9 +113,11 @@ export function LiveMatchPage({ match, onBack }: LiveMatchPageProps) {
           setTimerState({
             value: newData.timer_value || 0,
             status: newData.timer_status || "stopped",
-            lastUpdated: newData.updated_at
-              ? new Date(newData.updated_at).getTime()
-              : Date.now(),
+            // FIX: Use Date.now() (Reception Time) for live updates.
+            // This ignores the Scorer's clock and uses the Viewer's clock as the new baseline,
+            // preventing jumps caused by clock skew.
+            lastUpdated: Date.now(),
+            isLiveUpdate: true,
           });
         }
       )
@@ -123,26 +128,34 @@ export function LiveMatchPage({ match, onBack }: LiveMatchPageProps) {
     };
   }, [match.id]);
 
-  // 2. TICKER LOGIC
+  // --- 2. LOCAL CLOCK TICKER ---
   useEffect(() => {
-    // Immediately update display based on new state before interval kicks in
     const updateDisplayTime = () => {
-      const now = Date.now();
-      const diff = Math.floor((now - timerState.lastUpdated) / 1000);
+      // Static display if not running/break
+      if (timerState.status !== "running" && timerState.status !== "break") {
+        setCurrentTime(timerState.value);
+        return;
+      }
 
-      // Sanity check: If diff is huge (e.g. computer sleep), cap it or trust server?
-      // trusting calculation for now.
+      const now = Date.now();
+      let diff = Math.floor((now - timerState.lastUpdated) / 1000);
+
+      // CORRECTION: If initial load and clocks are skewed (Scorer ahead of Viewer),
+      // diff could be negative. We clamp it to 0 to prevent time traveling backwards.
+      if (!timerState.isLiveUpdate && diff < 0) {
+        diff = 0;
+      }
 
       if (timerState.status === "running") {
+        // Count UP for match time
         setCurrentTime(timerState.value + diff);
       } else if (timerState.status === "break") {
+        // Count DOWN for break time
         setCurrentTime(Math.max(0, timerState.value - diff));
-      } else {
-        setCurrentTime(timerState.value);
       }
     };
 
-    updateDisplayTime(); // Update immediately on state change
+    updateDisplayTime(); // Immediate update on state change
 
     let interval: NodeJS.Timeout;
     if (timerState.status === "running" || timerState.status === "break") {
@@ -170,10 +183,10 @@ export function LiveMatchPage({ match, onBack }: LiveMatchPageProps) {
     });
   };
 
+  // --- 3. STATS CALCULATION ---
   const { attackerSummary } = useMemo(() => {
     const attStats: Record<string, any> = {};
-    // Use the reversed actions list for display, but we need raw list for calculation if we want
-    // Actually, order doesn't matter for stats.
+
     actions.forEach((action: any) => {
       if (action.attackerJersey && action.attackerName) {
         const key = `${action.attackerJersey}-${action.attackerName}`;
@@ -195,7 +208,7 @@ export function LiveMatchPage({ match, onBack }: LiveMatchPageProps) {
     };
   }, [actions]);
 
-  const lastAction = actions.length > 0 ? actions[0] : null; // actions is already reversed
+  const lastAction = actions.length > 0 ? actions[0] : null;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-white p-4 md:p-6">
@@ -210,6 +223,7 @@ export function LiveMatchPage({ match, onBack }: LiveMatchPageProps) {
 
         {/* SCOREBOARD */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* Team A */}
           <Card className="bg-blue-50 border-blue-200 border-2">
             <CardContent className="p-4 md:p-6 text-center">
               <p className="text-sm text-gray-600 mb-1 font-bold">
@@ -249,6 +263,7 @@ export function LiveMatchPage({ match, onBack }: LiveMatchPageProps) {
                     </Badge>
                   )}
               </div>
+
               <p className="text-5xl text-gray-900 mb-1 font-mono">
                 {formatTimer(currentTime)}
               </p>
@@ -259,6 +274,7 @@ export function LiveMatchPage({ match, onBack }: LiveMatchPageProps) {
             </CardContent>
           </Card>
 
+          {/* Team B */}
           <Card className="bg-purple-50 border-purple-200 border-2">
             <CardContent className="p-4 md:p-6 text-center">
               <p className="text-sm text-gray-600 mb-1 font-bold">
@@ -295,8 +311,9 @@ export function LiveMatchPage({ match, onBack }: LiveMatchPageProps) {
           </Card>
         )}
 
+        {/* FEED & STATS */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Feed */}
+          {/* Feed - FIXED OVERFLOW */}
           <div className="lg:col-span-2">
             <Card className="border-gray-200 h-[600px] flex flex-col overflow-hidden">
               <CardHeader className="pb-3 border-b border-gray-100 shrink-0">
@@ -371,7 +388,7 @@ export function LiveMatchPage({ match, onBack }: LiveMatchPageProps) {
             </Card>
           </div>
 
-          {/* Top Attackers */}
+          {/* Top Attackers Panel */}
           <div className="space-y-4">
             <Card className="border-gray-200">
               <CardHeader className="pb-2">
@@ -393,9 +410,7 @@ export function LiveMatchPage({ match, onBack }: LiveMatchPageProps) {
 
             <Card className="border-gray-200">
               <CardHeader className="pb-2">
-                <CardTitle className="text-base">
-                  Top Attackers (Live)
-                </CardTitle>
+                <CardTitle className="text-base">Top Attackers (Live)</CardTitle>
               </CardHeader>
               <CardContent className="p-0">
                 {attackerSummary.length > 0 ? (

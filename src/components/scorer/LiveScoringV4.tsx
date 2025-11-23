@@ -100,6 +100,8 @@ type DbScoringAction = {
   user_id: string;
 };
 
+// --- Helper Functions ---
+
 const getStringValue = (action: any, key: string): string | null => {
   const val =
     action[key] ||
@@ -115,26 +117,139 @@ const getNumValue = (action: any, key: string): number => {
   return typeof val === "number" ? val : parseInt(val) || 0;
 };
 
+// --- Sticky State Hook for Persistence ---
+function useStickyState<T>(
+  defaultValue: T,
+  key: string
+): [T, React.Dispatch<React.SetStateAction<T>>] {
+  const [value, setValue] = useState<T>(() => {
+    try {
+      const stickyValue = window.localStorage.getItem(key);
+      return stickyValue !== null ? JSON.parse(stickyValue) : defaultValue;
+    } catch (error) {
+      console.error(`Error reading localStorage key "${key}":`, error);
+      return defaultValue;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(key, JSON.stringify(value));
+    } catch (error) {
+      console.error(`Error setting localStorage key "${key}":`, error);
+    }
+  }, [key, value]);
+
+  return [value, setValue];
+}
+
 export function LiveScoringV4({
   match,
   setupData,
   onBack,
   onEndMatch,
 }: LiveScoringV4Props) {
-  const [currentInning, setCurrentInning] = useState(1);
-  const [currentTurn, setCurrentTurn] = useState(1);
-  const [timer, setTimer] = useState(0);
-  const [isTimerRunning, setIsTimerRunning] = useState(false);
-  const [maxTimerDuration] = useState(setupData.timerDuration);
+  // --- Persistent Game State ---
+  const [currentInning, setCurrentInning] = useStickyState(
+    1,
+    `match_${match.id}_inning`
+  );
+  const [currentTurn, setCurrentTurn] = useStickyState(
+    1,
+    `match_${match.id}_turn`
+  );
 
-  // New: Memory for Saved Batches
-  const [savedBatchesA, setSavedBatchesA] = useState<Player[][] | null>(null);
-  const [savedBatchesB, setSavedBatchesB] = useState<Player[][] | null>(null);
+  // Timer State (Persistent)
+  const [timer, setTimer] = useStickyState(0, `match_${match.id}_timer`);
+  const [isTimerRunning, setIsTimerRunning] = useStickyState(
+    false,
+    `match_${match.id}_is_running`
+  );
+  const [lastTick, setLastTick] = useStickyState(
+    Date.now(),
+    `match_${match.id}_last_tick`
+  );
+  const [maxTimerDuration] = useState(setupData.timerDuration || 540);
 
+  // Break State (Persistent)
+  const [isOnBreak, setIsOnBreak] = useStickyState(
+    false,
+    `match_${match.id}_on_break`
+  );
+  const [breakTimer, setBreakTimer] = useStickyState(
+    0,
+    `match_${match.id}_break_timer`
+  );
+  const [breakType, setBreakType] = useStickyState<"turn" | "inning" | null>(
+    null,
+    `match_${match.id}_break_type`
+  );
+
+  // Team & Player State (Persistent to handle reloads during subs)
+  const [teamAPlaying, setTeamAPlaying] = useStickyState<Player[]>(
+    setupData.teamAPlaying,
+    `match_${match.id}_teamA_playing`
+  );
+  const [teamASubstitutes, setTeamASubstitutes] = useStickyState<Player[]>(
+    setupData.teamASubstitutes,
+    `match_${match.id}_teamA_subs`
+  );
+  const [teamBPlaying, setTeamBPlaying] = useStickyState<Player[]>(
+    setupData.teamBPlaying,
+    `match_${match.id}_teamB_playing`
+  );
+  const [teamBSubstitutes, setTeamBSubstitutes] = useStickyState<Player[]>(
+    setupData.teamBSubstitutes,
+    `match_${match.id}_teamB_subs`
+  );
+
+  const [currentDefendingTeam, setCurrentDefendingTeam] = useStickyState<
+    "A" | "B"
+  >(
+    (setupData.tossWinner === "A" && setupData.tossDecision === "defend") ||
+      (setupData.tossWinner === "B" && setupData.tossDecision === "attack")
+      ? "A"
+      : "B",
+    `match_${match.id}_defending_team`
+  );
+
+  // Batch State (Persistent)
+  const [defenderBatches, setDefenderBatches] = useStickyState<Player[][]>(
+    [],
+    `match_${match.id}_active_batches`
+  );
+  const [activeBatchIndex, setActiveBatchIndex] = useStickyState(
+    0,
+    `match_${match.id}_active_batch_idx`
+  );
+  const [batchesConfirmed, setBatchesConfirmed] = useStickyState(
+    false,
+    `match_${match.id}_batches_confirmed`
+  );
+  const [batchCycleCount, setBatchCycleCount] = useStickyState(
+    0,
+    `match_${match.id}_batch_cycle`
+  );
+  const [savedBatchesA, setSavedBatchesA] = useStickyState<Player[][] | null>(
+    null,
+    `match_${match.id}_saved_batches_A`
+  );
+  const [savedBatchesB, setSavedBatchesB] = useStickyState<Player[][] | null>(
+    null,
+    `match_${match.id}_saved_batches_B`
+  );
+
+  // --- Transient UI State (Resets on reload) ---
   const [showDefenderSubModal, setShowDefenderSubModal] = useState(false);
-  const [defenderToSwapOut, setDefenderToSwapOut] = useState<Player | null>(null);
-  const [teamADefenderSubUsed, setTeamADefenderSubUsed] = useState<{ [inning: number]: boolean }>({});
-  const [teamBDefenderSubUsed, setTeamBDefenderSubUsed] = useState<{ [inning: number]: boolean }>({});
+  const [defenderToSwapOut, setDefenderToSwapOut] = useState<Player | null>(
+    null
+  );
+  const [teamADefenderSubUsed, setTeamADefenderSubUsed] = useState<{
+    [inning: number]: boolean;
+  }>({});
+  const [teamBDefenderSubUsed, setTeamBDefenderSubUsed] = useState<{
+    [inning: number]: boolean;
+  }>({});
 
   const [selectedDefender, setSelectedDefender] = useState<Player | null>(null);
   const [selectedAttacker, setSelectedAttacker] = useState<Player | null>(null);
@@ -142,39 +257,25 @@ export function LiveScoringV4({
   const [substituteMode, setSubstituteMode] = useState(false);
   const [attackerToSwap, setAttackerToSwap] = useState<Player | null>(null);
   const [actions, setActions] = useState<DbScoringAction[]>([]);
+
   const [showConsolidatedReport, setShowConsolidatedReport] = useState(false);
   const [isFinalReport, setIsFinalReport] = useState(false);
   const [showEditActions, setShowEditActions] = useState(false);
   const [showEndMatchConfirm, setShowEndMatchConfirm] = useState(false);
   const [showCardConfirm, setShowCardConfirm] = useState(false);
-  const [pendingCardAction, setPendingCardAction] = useState<{ symbol: SymbolType; player: Player | null; isDefender: boolean; } | null>(null);
+  const [pendingCardAction, setPendingCardAction] = useState<{
+    symbol: SymbolType;
+    player: Player | null;
+    isDefender: boolean;
+  } | null>(null);
+
   const [userId, setUserId] = useState<string | null>(null);
   const [isConfirming, setIsConfirming] = useState(false);
-
-  const [isOnBreak, setIsOnBreak] = useState(false);
-  const [breakTimer, setBreakTimer] = useState(0);
-  const [breakType, setBreakType] = useState<"turn" | "inning" | null>(null);
-  const [batchCycleCount, setBatchCycleCount] = useState(0);
-
-  const [currentDefendingTeam, setCurrentDefendingTeam] = useState<"A" | "B">(
-    (setupData.tossWinner === "A" && setupData.tossDecision === "defend") ||
-    (setupData.tossWinner === "B" && setupData.tossDecision === "attack")
-      ? "A"
-      : "B"
-  );
-
-  const [teamAPlaying, setTeamAPlaying] = useState<Player[]>(setupData.teamAPlaying);
-  const [teamASubstitutes, setTeamASubstitutes] = useState<Player[]>(setupData.teamASubstitutes);
-  const [teamBPlaying, setTeamBPlaying] = useState<Player[]>(setupData.teamBPlaying);
-  const [teamBSubstitutes, setTeamBSubstitutes] = useState<Player[]>(setupData.teamBSubstitutes);
-
   const [showBatchModal, setShowBatchModal] = useState(false);
-  const [defenderBatches, setDefenderBatches] = useState<Player[][]>([]);
-  const [activeBatchIndex, setActiveBatchIndex] = useState(0);
-  const [batchesConfirmed, setBatchesConfirmed] = useState(false);
 
   const activeBatchIndexRef = useRef(activeBatchIndex);
-  
+
+  // --- Computed Properties ---
   const allPlayingDefenders = useMemo(
     () => (currentDefendingTeam === "A" ? teamAPlaying : teamBPlaying),
     [currentDefendingTeam, teamAPlaying, teamBPlaying]
@@ -191,18 +292,39 @@ export function LiveScoringV4({
     () => (currentDefendingTeam === "A" ? teamBPlaying : teamAPlaying),
     [currentDefendingTeam, teamBPlaying, teamAPlaying]
   );
+
   const attackerSubstitutes = useMemo(
     () => (currentDefendingTeam === "A" ? teamBSubstitutes : teamASubstitutes),
     [currentDefendingTeam, teamBSubstitutes, teamASubstitutes]
   );
 
+  const defenderSubstitutes = useMemo(
+    () => (currentDefendingTeam === "A" ? teamASubstitutes : teamBSubstitutes),
+    [currentDefendingTeam, teamASubstitutes, teamBSubstitutes]
+  );
+
+  const scores = useMemo(() => {
+    const teamAId = match.teamA.id;
+    const teamBId = match.teamB.id;
+    const teamAScore = actions
+      .filter((a) => a.scoring_team_id === teamAId)
+      .reduce((sum, a) => sum + (a.points || 0), 0);
+    const teamBScore = actions
+      .filter((a) => a.scoring_team_id === teamBId)
+      .reduce((sum, a) => sum + (a.points || 0), 0);
+    return { teamA: teamAScore, teamB: teamBScore };
+  }, [actions, match.teamA.id, match.teamB.id]);
+
+  // --- Batch Logic ---
   const defendersOutIdsInActiveBatch = useMemo(() => {
     const outIds = new Set<string>();
     if (!batchesConfirmed || !defenderBatches[activeBatchIndex]) {
       return outIds;
     }
 
-    const activeBatchPlayerIds = new Set(defenderBatches[activeBatchIndex].map((p) => p.id));
+    const activeBatchPlayerIds = new Set(
+      defenderBatches[activeBatchIndex].map((p) => p.id)
+    );
     const currentTurnActions = actions.filter(
       (a) =>
         a.inning === currentInning &&
@@ -210,8 +332,10 @@ export function LiveScoringV4({
         getStringValue(a, "defenderName")
     );
 
-    const startIndex = (batchCycleCount * TOTAL_BATCHES + activeBatchIndex) * BATCH_SIZE;
-    const actionsForCurrentBatchActivation = currentTurnActions.slice(startIndex);
+    const startIndex =
+      (batchCycleCount * TOTAL_BATCHES + activeBatchIndex) * BATCH_SIZE;
+    const actionsForCurrentBatchActivation =
+      currentTurnActions.slice(startIndex);
 
     actionsForCurrentBatchActivation.forEach((action) => {
       const defenderPlayer = allPlayingDefenders.find(
@@ -226,7 +350,16 @@ export function LiveScoringV4({
     });
 
     return outIds;
-  }, [actions, currentInning, currentTurn, batchesConfirmed, defenderBatches, activeBatchIndex, batchCycleCount, allPlayingDefenders]);
+  }, [
+    actions,
+    currentInning,
+    currentTurn,
+    batchesConfirmed,
+    defenderBatches,
+    activeBatchIndex,
+    batchCycleCount,
+    allPlayingDefenders,
+  ]);
 
   useEffect(() => {
     if (!batchesConfirmed || defenderBatches.length === 0) return;
@@ -246,17 +379,30 @@ export function LiveScoringV4({
       }
       setActiveBatchIndex(nextBatchIndex);
       setSelectedDefender(null);
-      toast.info(`Batch ${currentActiveIndex + 1} cleared! Batch ${nextBatchIndex + 1} is now active.`);
+      toast.info(
+        `Batch ${currentActiveIndex + 1} cleared! Batch ${
+          nextBatchIndex + 1
+        } is now active.`
+      );
     }
-  }, [defendersOutIdsInActiveBatch, batchesConfirmed, defenderBatches]);
+  }, [
+    defendersOutIdsInActiveBatch,
+    batchesConfirmed,
+    defenderBatches,
+    setActiveBatchIndex,
+    setBatchCycleCount,
+  ]);
 
   useEffect(() => {
     activeBatchIndexRef.current = activeBatchIndex;
   }, [activeBatchIndex]);
 
+  // --- Initial Data Fetch ---
   useEffect(() => {
     const fetchUserAndActions = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (user) setUserId(user.id);
 
       const { data, error } = await supabase
@@ -286,14 +432,20 @@ export function LiveScoringV4({
         (payload) => {
           if (payload.eventType === "INSERT") {
             setActions((currentActions) => {
-              if (currentActions.some((a) => a.id === (payload.new as DbScoringAction).id)) {
+              if (
+                currentActions.some(
+                  (a) => a.id === (payload.new as DbScoringAction).id
+                )
+              ) {
                 return currentActions;
               }
               return [...currentActions, payload.new as DbScoringAction];
             });
           } else if (payload.eventType === "DELETE") {
             setActions((currentActions) =>
-              currentActions.filter((action) => action.id !== (payload.old as DbScoringAction).id)
+              currentActions.filter(
+                (action) => action.id !== (payload.old as DbScoringAction).id
+              )
             );
           }
         }
@@ -305,78 +457,231 @@ export function LiveScoringV4({
     };
   }, [match.id]);
 
-  useEffect(() => {
-    let interval: NodeJS.Timeout | null = null;
-    if (!isOnBreak && isTimerRunning && timer < maxTimerDuration) {
-      interval = setInterval(() => {
-        setTimer((prev) => {
-          const newTime = prev + 1;
-          if (newTime >= maxTimerDuration) {
-            setIsTimerRunning(false);
-            toast.warning("⏰ Turn Over! Time limit reached", { duration: 3000 });
-            handleNextTurn(true);
-            return maxTimerDuration;
-          }
-          return newTime;
-        });
-      }, 1000);
+  // --- SYNC HELPERS ---
+  const syncTimerToDb = async (
+    newTimerValue: number,
+    status: "running" | "paused" | "break" | "stopped"
+  ) => {
+    try {
+      await supabase
+        .from("matches")
+        .update({
+          timer_value: newTimerValue,
+          timer_status: status,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", match.id);
+    } catch (err) {
+      console.error("Timer sync failed", err);
     }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [isTimerRunning, timer, maxTimerDuration, isOnBreak]);
+  };
 
-  const startNextTurnActual = useCallback(() => {
+  const updateMatchStatusToFinished = async () => {
+    // Calculate final scores locally to ensure accuracy
+    const teamAId = match.teamA.id;
+    const teamBId = match.teamB.id;
+    const finalScoreA = actions
+      .filter((a) => a.scoring_team_id === teamAId)
+      .reduce((sum, a) => sum + (a.points || 0), 0);
+    const finalScoreB = actions
+      .filter((a) => a.scoring_team_id === teamBId)
+      .reduce((sum, a) => sum + (a.points || 0), 0);
+
+    await supabase
+      .from("matches")
+      .update({
+        status: "finished",
+        score_a: finalScoreA,
+        score_b: finalScoreB,
+        timer_status: "stopped",
+      })
+      .eq("id", match.id);
+  };
+
+  // --- Turn Management ---
+  const startNextTurnActual = useCallback(async () => {
     setIsOnBreak(false);
     setBreakTimer(0);
     setBreakType(null);
 
     const newTurn = currentTurn + 1;
     let newInning = currentInning;
-    let isNewInning = false;
 
     if (currentTurn % 2 === 0) {
       newInning = currentInning + 1;
-      setCurrentInning(newInning);
-      isNewInning = true;
-    }
-
-    if (isNewInning) {
       setCurrentInning(newInning);
     }
 
     const totalTurnsToPlay = (match.innings || 2) * 2;
     if (newTurn > totalTurnsToPlay) {
-      toast.success(`All innings completed! Match Finished.`);
+      toast.success(`Match Finished!`);
       setShowEndMatchConfirm(true);
       return;
     }
 
-    if (isNewInning) {
-      toast.success(`Inning ${currentInning} Over! Starting Inning ${newInning}, Turn ${newTurn}.`);
-    } else {
-      toast.success(`Turn ${newTurn} started.`);
-    }
+    // UPDATE DB WITH NEW TURN INFO & RESET TIMER STATUS
+    await supabase
+      .from("matches")
+      .update({
+        current_inning: newInning,
+        current_turn: newTurn,
+        timer_status: "stopped", // Reset to stopped for the new turn
+        timer_value: 0,
+        status: "live",
+      })
+      .eq("id", match.id);
 
     setCurrentTurn(newTurn);
     setTimer(0);
     setIsTimerRunning(false);
-    setCurrentDefendingTeam((prev) => (prev === "A" ? "B" : "A"));
 
+    // Switch sides
+    const nextDefendingTeam = currentDefendingTeam === "A" ? "B" : "A";
+    setCurrentDefendingTeam(nextDefendingTeam);
+
+    // Reset local transient state
     setSelectedDefender(null);
     setSelectedAttacker(null);
     setSelectedSymbol(null);
-    setBatchesConfirmed(false);
+    setBatchesConfirmed(false); // Force batch selection for new turn
     setDefenderBatches([]);
     setActiveBatchIndex(0);
     setBatchCycleCount(0);
-    setDefenderToSwapOut(null);
-    setShowDefenderSubModal(false);
-    
-    // IMPORTANT: Don't automatically show the modal. 
-    // Let the user see the "Set Batches" or "Use Previous" buttons.
-  }, [currentInning, currentTurn, match.innings]);
 
+    // Save current batches to "Previous" cache before clearing
+    if (currentDefendingTeam === "A") {
+      setSavedBatchesA(defenderBatches);
+    } else {
+      setSavedBatchesB(defenderBatches);
+    }
+
+    toast.success(
+      newInning > currentInning
+        ? `Starting Inning ${newInning}, Turn ${newTurn}`
+        : `Starting Turn ${newTurn}`
+    );
+  }, [
+    currentTurn,
+    currentInning,
+    match.id,
+    currentDefendingTeam,
+    defenderBatches,
+    match.innings,
+    setBatchesConfirmed,
+    setDefenderBatches,
+    setActiveBatchIndex,
+    setBatchCycleCount,
+    setIsOnBreak,
+    setBreakTimer,
+    setBreakType,
+    setCurrentInning,
+    setCurrentTurn,
+    setTimer,
+    setIsTimerRunning,
+    setCurrentDefendingTeam,
+    setSavedBatchesA,
+    setSavedBatchesB,
+  ]);
+
+  const handleNextTurn = useCallback(
+    (autoTriggered = false) => {
+      if (isOnBreak) {
+        toast.info("Already in a break.");
+        return;
+      }
+      const confirmMessage = autoTriggered
+        ? `Turn ${currentTurn} ended due to time limit. Start the break?`
+        : `End Turn ${currentTurn} and start the break?`;
+
+      if (!autoTriggered && !confirm(confirmMessage)) {
+        return;
+      }
+
+      setIsTimerRunning(false);
+      let breakDuration = TURN_BREAK_DURATION;
+      let nextBreakType: "turn" | "inning" = "turn";
+      let toastMessage = `Turn ${currentTurn} finished. Starting ${formatTime(
+        TURN_BREAK_DURATION
+      )} break.`;
+
+      if (currentTurn % 2 === 0) {
+        breakDuration = INNING_BREAK_DURATION;
+        nextBreakType = "inning";
+        toastMessage = `Inning ${currentInning} finished. Starting ${formatTime(
+          INNING_BREAK_DURATION
+        )} break.`;
+      }
+
+      setBreakType(nextBreakType);
+      setBreakTimer(breakDuration);
+      setIsOnBreak(true);
+
+      // SYNC BREAK STATUS TO DB
+      syncTimerToDb(breakDuration, "break");
+
+      toast.info(toastMessage);
+
+      // Don't clear batches yet, wait for startNextTurnActual
+    },
+    [
+      isOnBreak,
+      currentTurn,
+      currentInning,
+      setIsTimerRunning,
+      setBreakType,
+      setBreakTimer,
+      setIsOnBreak,
+    ]
+  );
+
+  // --- Robust Timer Logic (Fixed) ---
+  // 1. Pure Timer Update Loop
+  useEffect(() => {
+    let interval: NodeJS.Timeout | null = null;
+
+    if (isTimerRunning && !isOnBreak) {
+      interval = setInterval(() => {
+        const now = Date.now();
+        const delta = Math.floor((now - lastTick) / 1000);
+
+        if (delta >= 1) {
+          setTimer((prev) => Math.min(prev + delta, maxTimerDuration));
+          setLastTick(now);
+        }
+      }, 1000);
+    } else {
+      setLastTick(Date.now());
+    }
+
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [
+    isTimerRunning,
+    isOnBreak,
+    lastTick,
+    maxTimerDuration,
+    setTimer,
+    setLastTick,
+  ]);
+
+  // 2. Timer Limit Watcher
+  useEffect(() => {
+    if (timer >= maxTimerDuration && isTimerRunning) {
+      setIsTimerRunning(false);
+      syncTimerToDb(maxTimerDuration, "paused"); // Stop timer in DB
+      toast.warning("⏰ Turn Over! Time limit reached");
+      handleNextTurn(true);
+    }
+  }, [
+    timer,
+    maxTimerDuration,
+    isTimerRunning,
+    handleNextTurn,
+    setIsTimerRunning,
+  ]);
+
+  // --- Break Timer Logic ---
   useEffect(() => {
     let breakInterval: NodeJS.Timeout | null = null;
     if (isOnBreak && breakTimer > 0) {
@@ -384,7 +689,7 @@ export function LiveScoringV4({
         setBreakTimer((prev) => {
           const newTime = prev - 1;
           if (newTime <= 0) {
-            startNextTurnActual();
+            startNextTurnActual(); // Auto-start next turn
             if (breakInterval) clearInterval(breakInterval);
             return 0;
           }
@@ -395,12 +700,22 @@ export function LiveScoringV4({
     return () => {
       if (breakInterval) clearInterval(breakInterval);
     };
-  }, [isOnBreak, breakTimer, startNextTurnActual]);
+  }, [isOnBreak, breakTimer, startNextTurnActual, setBreakTimer]);
 
+  const handleSkipBreak = () => {
+    if (!isOnBreak) return;
+    if (confirm("Are you sure you want to skip the remaining break time?")) {
+      startNextTurnActual();
+    }
+  };
+
+  // --- Actions Handlers ---
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
-    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+    return `${mins.toString().padStart(2, "0")}:${secs
+      .toString()
+      .padStart(2, "0")}`;
   };
 
   const handleToggleTimer = useCallback(
@@ -413,9 +728,14 @@ export function LiveScoringV4({
         toast.error("Please set defender batches before starting the timer.");
         return;
       }
+
       setIsTimerRunning(run);
+      setLastTick(Date.now());
+
+      // SYNC: Immediately tell DB the new state
+      syncTimerToDb(timer, run ? "running" : "paused");
     },
-    [isOnBreak, batchesConfirmed]
+    [isOnBreak, batchesConfirmed, timer, setIsTimerRunning, setLastTick]
   );
 
   const handleResetTimer = useCallback(() => {
@@ -426,110 +746,10 @@ export function LiveScoringV4({
     if (confirm("Are you sure you want to reset the timer to 00:00?")) {
       setTimer(0);
       setIsTimerRunning(false);
+      syncTimerToDb(0, "stopped");
       toast.info("Timer reset.");
     }
-  }, [isOnBreak]);
-
-  const handleDefenderSelect = (defender: Player) => {
-    if (activeDefenders.some((ad) => ad.id === defender.id)) {
-      setSelectedDefender((prev) => prev?.id === defender.id ? null : defender);
-      setSelectedSymbol(null);
-    } else {
-      toast.error("This player is not in the active batch.");
-    }
-    setSubstituteMode(false);
-    setAttackerToSwap(null);
-  };
-
-  const handleAttackerSelect = (attacker: Player) => {
-    setSelectedAttacker((prev) => (prev?.id === attacker.id ? null : attacker));
-    setSelectedSymbol(null);
-  };
-
-  const handleSymbolSelect = (symbol: SymbolType) => {
-    const symbolData = SYMBOLS.find((s) => s.type === symbol);
-    if (!symbolData) return;
-
-    if (symbolData.singlePlayer) {
-      if (!selectedDefender && !selectedAttacker) {
-        toast.error("Please select either a defender OR an attacker for this symbol.");
-        return;
-      }
-      if (selectedDefender && selectedAttacker) {
-        toast.info("Clearing attacker selection as this symbol applies to one player.");
-        setSelectedAttacker(null);
-      }
-    } else {
-      if (!selectedDefender) {
-        toast.error("Please select a defender first.");
-        return;
-      }
-      if (!selectedAttacker) {
-        toast.error("Please select an attacker.");
-        return;
-      }
-    }
-    setSelectedSymbol(symbol);
-  };
-
-  const handleSubstituteClick = () => {
-    if (!isTimerRunning || isOnBreak) {
-      toast.error("Timer must be running and not in a break to substitute.");
-      return;
-    }
-    if (!selectedAttacker) {
-      toast.error("Please select a playing attacker to substitute");
-      return;
-    }
-    setSubstituteMode(true);
-    setAttackerToSwap(selectedAttacker);
-    toast.info(`Select a substitute player to swap with ${selectedAttacker.name}`);
-  };
-
-  const handleSubstituteSelect = (substitute: Player) => {
-    if (!attackerToSwap) return;
-    if (currentDefendingTeam === "A") {
-      const newPlaying = teamBPlaying.filter((p) => p.id !== attackerToSwap.id);
-      newPlaying.push(substitute);
-      const newSubstitutes = teamBSubstitutes.filter((p) => p.id !== substitute.id);
-      newSubstitutes.push(attackerToSwap);
-      setTeamBPlaying(newPlaying);
-      setTeamBSubstitutes(newSubstitutes);
-    } else {
-      const newPlaying = teamAPlaying.filter((p) => p.id !== attackerToSwap.id);
-      newPlaying.push(substitute);
-      const newSubstitutes = teamASubstitutes.filter((p) => p.id !== substitute.id);
-      newSubstitutes.push(attackerToSwap);
-      setTeamAPlaying(newPlaying);
-      setTeamASubstitutes(newSubstitutes);
-    }
-    recordSubstitutionAction(attackerToSwap, substitute);
-    toast.success(`Substituted ${attackerToSwap.name} with ${substitute.name}`);
-    setSelectedAttacker(substitute);
-    setSubstituteMode(false);
-    setAttackerToSwap(null);
-  };
-
-  const recordSubstitutionAction = async (playerOut: Player, playerIn: Player) => {
-    if (!userId) return;
-    const subActionData = {
-      match_id: match.id,
-      inning: currentInning,
-      turn: currentTurn,
-      scoring_team_id: currentDefendingTeam === "A" ? match.teamB.id : match.teamA.id,
-      attacker_jersey: playerOut.jerseyNumber,
-      attacker_name: playerOut.name,
-      defender_jersey: playerIn.jerseyNumber,
-      defender_name: playerIn.name,
-      symbol: "substitute" as SymbolType,
-      action_type: "sub",
-      points: 0,
-      run_time: timer,
-      per_time: 0,
-      user_id: userId,
-    };
-    await supabase.from("scoring_actions").insert([subActionData]);
-  };
+  }, [isOnBreak, setTimer, setIsTimerRunning]);
 
   const handleOut = () => {
     if (isConfirming) {
@@ -537,7 +757,9 @@ export function LiveScoringV4({
       return;
     }
     if (!isTimerRunning || isOnBreak) {
-      toast.error("Timer must be running and not in a break to record an action.");
+      toast.error(
+        "Timer must be running and not in a break to record an action."
+      );
       return;
     }
     setIsConfirming(true);
@@ -594,20 +816,25 @@ export function LiveScoringV4({
       const currentTurnActions = actions.filter(
         (a) => a.inning === currentInning && a.turn === currentTurn
       );
-      const lastActionTime = currentTurnActions.length > 0
-        ? currentTurnActions[currentTurnActions.length - 1].run_time
-        : 0;
+      const lastActionTime =
+        currentTurnActions.length > 0
+          ? currentTurnActions[currentTurnActions.length - 1].run_time
+          : 0;
       const perTime = defender ? timer - lastActionTime : 0;
-      const scoring_team_id = currentDefendingTeam === "A" ? match.teamB.id : match.teamA.id;
+      const scoring_team_id =
+        currentDefendingTeam === "A" ? match.teamB.id : match.teamA.id;
 
+      // 1. Insert Action
       const newActionData: Omit<DbScoringAction, "id" | "created_at"> = {
         match_id: match.id,
         inning: currentInning,
         turn: currentTurn,
         scoring_team_id,
-        defender_jersey: isSingle && !defender ? null : defender?.jerseyNumber || null,
+        defender_jersey:
+          isSingle && !defender ? null : defender?.jerseyNumber || null,
         defender_name: isSingle && !defender ? null : defender?.name || null,
-        attacker_jersey: isSingle && defender ? null : attacker?.jerseyNumber || null,
+        attacker_jersey:
+          isSingle && defender ? null : attacker?.jerseyNumber || null,
         attacker_name: isSingle && defender ? null : attacker?.name || null,
         symbol: selectedSymbol!,
         action_type: "out",
@@ -617,23 +844,44 @@ export function LiveScoringV4({
         user_id: userId!,
       };
 
-      const { error } = await supabase
+      const { error: actionError } = await supabase
         .from("scoring_actions")
         .insert([newActionData])
         .select();
 
-      if (error) {
-        toast.error("Failed to save action: " + error.message);
-      } else {
-        const targetName = isSingle ? defender?.name || attacker?.name : defender?.name;
-        toast.success(`${targetName || "Player"} recorded with symbol: ${symbolData.abbr}`);
-        setSelectedDefender(null);
-        setSelectedAttacker(null);
-        setSelectedSymbol(null);
-      }
-    } catch (err) {
-      console.error("Error during confirmOut:", err);
-      toast.error("An unexpected error occurred.");
+      if (actionError) throw new Error(actionError.message);
+
+      // 2. Update Match Score in Real-time
+      const pointsToAdd = symbolData.points;
+      const isTeamAScoring = scoring_team_id === match.teamA.id;
+
+      const newScoreA = isTeamAScoring
+        ? scores.teamA + pointsToAdd
+        : scores.teamA;
+      const newScoreB = !isTeamAScoring
+        ? scores.teamB + pointsToAdd
+        : scores.teamB;
+
+      await supabase
+        .from("matches")
+        .update({
+          score_a: newScoreA,
+          score_b: newScoreB,
+        })
+        .eq("id", match.id);
+
+      const targetName = isSingle
+        ? defender?.name || attacker?.name
+        : defender?.name;
+      toast.success(
+        `${targetName || "Player"} recorded with symbol: ${symbolData.abbr}`
+      );
+      setSelectedDefender(null);
+      setSelectedAttacker(null);
+      setSelectedSymbol(null);
+    } catch (err: any) {
+      console.error("Error saving action:", err);
+      toast.error("Failed to save action: " + err.message);
     } finally {
       setIsConfirming(false);
     }
@@ -679,37 +927,94 @@ export function LiveScoringV4({
     if (error) {
       toast.error(`Failed to undo last action: ${error.message}`);
     } else {
-      toast.success("Last action successfully undone.");
+      toast.success("Last action successfully undone. Score will update.");
     }
   };
 
-  const scores = useMemo(() => {
-    const teamAId = match.teamA.id;
-    const teamBId = match.teamB.id;
-    const teamAScore = actions
-      .filter((a) => a.scoring_team_id === teamAId)
-      .reduce((sum, a) => sum + (a.points || 0), 0);
-    const teamBScore = actions
-      .filter((a) => a.scoring_team_id === teamBId)
-      .reduce((sum, a) => sum + (a.points || 0), 0);
-    return { teamA: teamAScore, teamB: teamBScore };
-  }, [actions, match.teamA.id, match.teamB.id]);
+  // --- Substitutions ---
+  const recordSubstitutionAction = async (
+    playerOut: Player,
+    playerIn: Player
+  ) => {
+    if (!userId) return;
+    const subActionData = {
+      match_id: match.id,
+      inning: currentInning,
+      turn: currentTurn,
+      scoring_team_id:
+        currentDefendingTeam === "A" ? match.teamB.id : match.teamA.id,
+      attacker_jersey: playerOut.jerseyNumber,
+      attacker_name: playerOut.name,
+      defender_jersey: playerIn.jerseyNumber,
+      defender_name: playerIn.name,
+      symbol: "substitute" as SymbolType,
+      action_type: "sub",
+      points: 0,
+      run_time: timer,
+      per_time: 0,
+      user_id: userId,
+    };
+    await supabase.from("scoring_actions").insert([subActionData]);
+  };
 
-  const defenderSubstitutes = useMemo(
-    () => (currentDefendingTeam === "A" ? teamASubstitutes : teamBSubstitutes),
-    [currentDefendingTeam, teamASubstitutes, teamBSubstitutes]
-  );
+  const handleSubstituteClick = () => {
+    if (!isTimerRunning || isOnBreak) {
+      toast.error("Timer must be running and not in a break to substitute.");
+      return;
+    }
+    if (!selectedAttacker) {
+      toast.error("Please select a playing attacker to substitute");
+      return;
+    }
+    setSubstituteMode(true);
+    setAttackerToSwap(selectedAttacker);
+    toast.info(
+      `Select a substitute player to swap with ${selectedAttacker.name}`
+    );
+  };
 
+  const handleSubstituteSelect = (substitute: Player) => {
+    if (!attackerToSwap) return;
+    if (currentDefendingTeam === "A") {
+      const newPlaying = teamBPlaying.filter((p) => p.id !== attackerToSwap.id);
+      newPlaying.push(substitute);
+      const newSubstitutes = teamBSubstitutes.filter(
+        (p) => p.id !== substitute.id
+      );
+      newSubstitutes.push(attackerToSwap);
+      setTeamBPlaying(newPlaying);
+      setTeamBSubstitutes(newSubstitutes);
+    } else {
+      const newPlaying = teamAPlaying.filter((p) => p.id !== attackerToSwap.id);
+      newPlaying.push(substitute);
+      const newSubstitutes = teamASubstitutes.filter(
+        (p) => p.id !== substitute.id
+      );
+      newSubstitutes.push(attackerToSwap);
+      setTeamAPlaying(newPlaying);
+      setTeamASubstitutes(newSubstitutes);
+    }
+    recordSubstitutionAction(attackerToSwap, substitute);
+    toast.success(`Substituted ${attackerToSwap.name} with ${substitute.name}`);
+    setSelectedAttacker(substitute);
+    setSubstituteMode(false);
+    setAttackerToSwap(null);
+  };
+
+  // --- Defender Substitution (Pre-Turn) ---
   const handleOpenDefenderSub = () => {
     if (isTimerRunning || isOnBreak) {
       toast.error("Can only substitute defenders before the turn starts.");
       return;
     }
-    const subUsed = currentDefendingTeam === "A"
-      ? teamADefenderSubUsed[currentInning]
-      : teamBDefenderSubUsed[currentInning];
+    const subUsed =
+      currentDefendingTeam === "A"
+        ? teamADefenderSubUsed[currentInning]
+        : teamBDefenderSubUsed[currentInning];
     if (subUsed) {
-      toast.info(`Defender substitution already used for Inning ${currentInning}.`);
+      toast.info(
+        `Defender substitution already used for Inning ${currentInning}.`
+      );
       return;
     }
     setShowDefenderSubModal(true);
@@ -719,23 +1024,33 @@ export function LiveScoringV4({
 
   const handleSelectDefenderToSwap = (player: Player) => {
     setDefenderToSwapOut(player);
-    toast.info(`Selected ${player.name}. Now select a substitute from the bench.`);
+    toast.info(
+      `Selected ${player.name}. Now select a substitute from the bench.`
+    );
   };
 
   const handleSelectDefenderSubstitute = (substituteIn: Player) => {
     if (!defenderToSwapOut) return;
     if (currentDefendingTeam === "A") {
-      const newPlaying = teamAPlaying.filter((p) => p.id !== defenderToSwapOut.id);
+      const newPlaying = teamAPlaying.filter(
+        (p) => p.id !== defenderToSwapOut.id
+      );
       newPlaying.push(substituteIn);
-      const newSubstitutes = teamASubstitutes.filter((p) => p.id !== substituteIn.id);
+      const newSubstitutes = teamASubstitutes.filter(
+        (p) => p.id !== substituteIn.id
+      );
       newSubstitutes.push(defenderToSwapOut);
       setTeamAPlaying(newPlaying);
       setTeamASubstitutes(newSubstitutes);
       setTeamADefenderSubUsed((prev) => ({ ...prev, [currentInning]: true }));
     } else {
-      const newPlaying = teamBPlaying.filter((p) => p.id !== defenderToSwapOut.id);
+      const newPlaying = teamBPlaying.filter(
+        (p) => p.id !== defenderToSwapOut.id
+      );
       newPlaying.push(substituteIn);
-      const newSubstitutes = teamBSubstitutes.filter((p) => p.id !== substituteIn.id);
+      const newSubstitutes = teamBSubstitutes.filter(
+        (p) => p.id !== substituteIn.id
+      );
       newSubstitutes.push(defenderToSwapOut);
       setTeamBPlaying(newPlaying);
       setTeamBSubstitutes(newSubstitutes);
@@ -744,12 +1059,16 @@ export function LiveScoringV4({
 
     if (batchesConfirmed) {
       const updatedBatches = defenderBatches.map((batch) =>
-        batch.map((player) => (player.id === defenderToSwapOut.id ? substituteIn : player))
+        batch.map((player) =>
+          player.id === defenderToSwapOut.id ? substituteIn : player
+        )
       );
       setDefenderBatches(updatedBatches);
     }
     recordSubstitutionAction(defenderToSwapOut, substituteIn);
-    toast.success(`Substituted defender ${defenderToSwapOut.name} with ${substituteIn.name}.`);
+    toast.success(
+      `Substituted defender ${defenderToSwapOut.name} with ${substituteIn.name}.`
+    );
     setShowDefenderSubModal(false);
     setDefenderToSwapOut(null);
     setSelectedDefender(null);
@@ -760,62 +1079,106 @@ export function LiveScoringV4({
     setDefenderToSwapOut(null);
   };
 
-  const handleNextTurn = (autoTriggered = false) => {
-    if (isOnBreak) {
-      toast.info("Already in a break.");
-      return;
+  // --- Selection Handlers ---
+  const handleDefenderSelect = (defender: Player) => {
+    if (activeDefenders.some((ad) => ad.id === defender.id)) {
+      setSelectedDefender((prev) =>
+        prev?.id === defender.id ? null : defender
+      );
+      setSelectedSymbol(null);
+    } else {
+      toast.error("This player is not in the active batch.");
     }
-    const confirmMessage = autoTriggered
-      ? `Turn ${currentTurn} ended due to time limit. Start the break?`
-      : `End Turn ${currentTurn} and start the break?`;
-
-    if (!autoTriggered && !confirm(confirmMessage)) {
-      return;
-    }
-
-    setIsTimerRunning(false);
-    let breakDuration = TURN_BREAK_DURATION;
-    let nextBreakType: "turn" | "inning" = "turn";
-    let toastMessage = `Turn ${currentTurn} finished. Starting ${formatTime(TURN_BREAK_DURATION)} break.`;
-
-    if (currentTurn % 2 === 0) {
-      breakDuration = INNING_BREAK_DURATION;
-      nextBreakType = "inning";
-      toastMessage = `Inning ${currentInning} finished. Starting ${formatTime(INNING_BREAK_DURATION)} break.`;
-    }
-
-    setBreakType(nextBreakType);
-    setBreakTimer(breakDuration);
-    setIsOnBreak(true);
-    toast.info(toastMessage);
-
-    setBatchesConfirmed(false);
-    setDefenderBatches([]);
-    setActiveBatchIndex(0);
+    setSubstituteMode(false);
+    setAttackerToSwap(null);
   };
 
-  const handleSkipBreak = () => {
-    if (!isOnBreak) return;
-    if (confirm("Are you sure you want to skip the remaining break time?")) {
-      startNextTurnActual();
-    }
+  const handleAttackerSelect = (attacker: Player) => {
+    setSelectedAttacker((prev) => (prev?.id === attacker.id ? null : attacker));
+    setSelectedSymbol(null);
   };
 
+  const handleSymbolSelect = (symbol: SymbolType) => {
+    const symbolData = SYMBOLS.find((s) => s.type === symbol);
+    if (!symbolData) return;
+
+    if (symbolData.singlePlayer) {
+      if (!selectedDefender && !selectedAttacker) {
+        toast.error(
+          "Please select either a defender OR an attacker for this symbol."
+        );
+        return;
+      }
+      if (selectedDefender && selectedAttacker) {
+        toast.info(
+          "Clearing attacker selection as this symbol applies to one player."
+        );
+        setSelectedAttacker(null);
+      }
+    } else {
+      if (!selectedDefender) {
+        toast.error("Please select a defender first.");
+        return;
+      }
+      if (!selectedAttacker) {
+        toast.error("Please select an attacker.");
+        return;
+      }
+    }
+    setSelectedSymbol(symbol);
+  };
+
+  // --- Match End ---
   const handleEndMatch = () => {
     if (isOnBreak) {
       toast.error("Cannot end the match during a break.");
       return;
     }
     if (currentTurn < 2 && currentInning === 1) {
-      toast.error("At least one full inning (2 turns) must be completed before ending the match.");
+      toast.error(
+        "At least one full inning (2 turns) must be completed before ending the match."
+      );
       return;
     }
     setShowEndMatchConfirm(true);
   };
 
-  const confirmEndMatch = () => {
+  const confirmEndMatch = async () => {
+    // 1. UPDATE DB IMMEDIATELY
+    await updateMatchStatusToFinished();
+
+    // 2. CLEAR LOCAL STORAGE
+    const keysToRemove = [
+      `match_${match.id}_inning`,
+      `match_${match.id}_turn`,
+      `match_${match.id}_timer`,
+      `match_${match.id}_is_running`,
+      `match_${match.id}_last_tick`,
+      `match_${match.id}_on_break`,
+      `match_${match.id}_break_timer`,
+      `match_${match.id}_break_type`,
+      `match_${match.id}_active_batches`,
+      `match_${match.id}_active_batch_idx`,
+      `match_${match.id}_batches_confirmed`,
+      `match_${match.id}_batch_cycle`,
+      `match_${match.id}_saved_batches_A`,
+      `match_${match.id}_saved_batches_B`,
+      `match_${match.id}_teamA_playing`,
+      `match_${match.id}_teamA_subs`,
+      `match_${match.id}_teamB_playing`,
+      `match_${match.id}_teamB_subs`,
+      `match_${match.id}_defending_team`,
+    ];
+    keysToRemove.forEach((k) => window.localStorage.removeItem(k));
+
     setIsTimerRunning(false);
     setShowEndMatchConfirm(false);
+
+    // 3. Trigger Parent callback immediately so the user is navigated away
+    // or the UI updates instantly. We pass the current actions state.
+    onEndMatch(actions as unknown as ScoringAction[]);
+
+    // Optionally show the report modal if you want them to see it before navigating away
     setIsFinalReport(true);
     setShowConsolidatedReport(true);
   };
@@ -828,9 +1191,39 @@ export function LiveScoringV4({
   const handleCloseReportAndFinish = () => {
     setShowConsolidatedReport(false);
     setIsFinalReport(false);
-    onEndMatch(actions as unknown as ScoringAction[]);
+    // Navigation is handled by onEndMatch being called in confirmEndMatch
   };
 
+  // --- Batch Modal Handlers ---
+  const handleConfirmBatches = (confirmedBatches: Player[][]) => {
+    setDefenderBatches(confirmedBatches);
+    setBatchesConfirmed(true);
+    setActiveBatchIndex(0);
+    setShowBatchModal(false);
+
+    if (currentDefendingTeam === "A") {
+      setSavedBatchesA(confirmedBatches);
+    } else {
+      setSavedBatchesB(confirmedBatches);
+    }
+
+    toast.success("Defender batches confirmed for this turn!");
+  };
+
+  const handleUsePreviousBatches = () => {
+    const previousBatches =
+      currentDefendingTeam === "A" ? savedBatchesA : savedBatchesB;
+    if (previousBatches) {
+      setDefenderBatches(previousBatches);
+      setBatchesConfirmed(true);
+      setActiveBatchIndex(0);
+      toast.success("Previous batches loaded successfully!");
+    } else {
+      toast.error("No previous batches found for this team.");
+    }
+  };
+
+  // --- Scoresheet Data Preparation ---
   const defenderScoresheet = useMemo(() => {
     return actions
       .filter(
@@ -850,7 +1243,9 @@ export function LiveScoringV4({
   }, [actions, currentInning, currentTurn]);
 
   const attackerScoresheet = useMemo(() => {
-    const sheet: { [key: number]: { name: string; points: number; defendersOut: string[] } } = {};
+    const sheet: {
+      [key: number]: { name: string; points: number; defendersOut: string[] };
+    } = {};
     actions
       .filter((a) => a.inning === currentInning && a.turn === currentTurn)
       .forEach((action) => {
@@ -876,49 +1271,26 @@ export function LiveScoringV4({
     return sheet;
   }, [actions, currentInning, currentTurn]);
 
-  // --- Batch Confirmation Handler ---
-  const handleConfirmBatches = (confirmedBatches: Player[][]) => {
-    setDefenderBatches(confirmedBatches);
-    setBatchesConfirmed(true);
-    setActiveBatchIndex(0);
-    setShowBatchModal(false);
-    
-    // Save batches to state for future reuse
-    if (currentDefendingTeam === 'A') {
-      setSavedBatchesA(confirmedBatches);
-    } else {
-      setSavedBatchesB(confirmedBatches);
-    }
-
-    toast.success("Defender batches confirmed for this turn!");
-  };
-
-  // --- Load Previous Batches Handler ---
-  const handleUsePreviousBatches = () => {
-    const previousBatches = currentDefendingTeam === 'A' ? savedBatchesA : savedBatchesB;
-    if (previousBatches) {
-      setDefenderBatches(previousBatches);
-      setBatchesConfirmed(true);
-      setActiveBatchIndex(0);
-      toast.success("Previous batches loaded successfully!");
-    } else {
-      toast.error("No previous batches found for this team.");
-    }
-  };
-
   return (
     <>
-      <AlertDialog open={showEndMatchConfirm} onOpenChange={setShowEndMatchConfirm}>
+      <AlertDialog
+        open={showEndMatchConfirm}
+        onOpenChange={setShowEndMatchConfirm}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>End Match</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to end the match? This will finalize the scores and show the final report.
+              Are you sure you want to end the match? This will finalize the
+              scores and show the final report.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmEndMatch} className="bg-red-600 hover:bg-red-700">
+            <AlertDialogAction
+              onClick={confirmEndMatch}
+              className="bg-red-600 hover:bg-red-700"
+            >
               Yes, End Match & View Report
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -929,19 +1301,36 @@ export function LiveScoringV4({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {pendingCardAction?.symbol === "yellow-card" ? "Yellow Card" : "Red Card"} Confirmation
+              {pendingCardAction?.symbol === "yellow-card"
+                ? "Yellow Card"
+                : "Red Card"}{" "}
+              Confirmation
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to issue a {pendingCardAction?.symbol === "yellow-card" ? "Yellow Card" : "Red Card"} to <strong>{pendingCardAction?.player?.name}</strong> (#{pendingCardAction?.player?.jerseyNumber})?
+              Are you sure you want to issue a{" "}
+              {pendingCardAction?.symbol === "yellow-card"
+                ? "Yellow Card"
+                : "Red Card"}{" "}
+              to <strong>{pendingCardAction?.player?.name}</strong> (#
+              {pendingCardAction?.player?.jerseyNumber})?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setPendingCardAction(null)}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel onClick={() => setPendingCardAction(null)}>
+              Cancel
+            </AlertDialogCancel>
             <AlertDialogAction
               onClick={confirmCardAction}
-              className={pendingCardAction?.symbol === "yellow-card" ? "bg-yellow-600 hover:bg-yellow-700" : "bg-red-600 hover:bg-red-700"}
+              className={
+                pendingCardAction?.symbol === "yellow-card"
+                  ? "bg-yellow-600 hover:bg-yellow-700"
+                  : "bg-red-600 hover:bg-red-700"
+              }
             >
-              Confirm {pendingCardAction?.symbol === "yellow-card" ? "Yellow Card" : "Red Card"}
+              Confirm{" "}
+              {pendingCardAction?.symbol === "yellow-card"
+                ? "Yellow Card"
+                : "Red Card"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -952,15 +1341,21 @@ export function LiveScoringV4({
           match={match}
           setupData={setupData}
           actions={actions as unknown as ScoringAction[]}
-          onClose={isFinalReport ? handleCloseReportAndFinish : handleCloseReport}
+          onClose={
+            isFinalReport ? handleCloseReportAndFinish : handleCloseReport
+          }
         />
       )}
 
       {showEditActions && (
         <EditActionsPage
           actions={actions as unknown as ScoringAction[]}
-          allDefenders={currentDefendingTeam === "A" ? teamAPlaying : teamBPlaying}
-          allAttackers={currentDefendingTeam === "A" ? teamBPlaying : teamAPlaying}
+          allDefenders={
+            currentDefendingTeam === "A" ? teamAPlaying : teamBPlaying
+          }
+          allAttackers={
+            currentDefendingTeam === "A" ? teamBPlaying : teamAPlaying
+          }
           onSave={(edited, remarks) => {
             console.log("Saving edited actions:", edited, "Remarks:", remarks);
             setShowEditActions(false);
@@ -972,11 +1367,12 @@ export function LiveScoringV4({
 
       <BatchSelectionModal
         isOpen={showBatchModal}
-        teamName={currentDefendingTeam === "A" ? match.teamA.name : match.teamB.name}
+        teamName={
+          currentDefendingTeam === "A" ? match.teamA.name : match.teamB.name
+        }
         players={allPlayingDefenders}
         initialBatches={batchesConfirmed ? defenderBatches : undefined}
-        // FIX: If confirmed, always show as Read Only/View mode.
-        isReadOnly={batchesConfirmed} 
+        isReadOnly={batchesConfirmed}
         onConfirm={handleConfirmBatches}
         onCancel={() => setShowBatchModal(false)}
       />
@@ -992,7 +1388,7 @@ export function LiveScoringV4({
           currentTurn={currentTurn}
           onToggleTimer={handleToggleTimer}
           onUndo={handleUndoLastAction}
-          onNextTurn={handleNextTurn}
+          onNextTurn={() => handleNextTurn(false)}
           onEndMatch={handleEndMatch}
           onResetTimer={handleResetTimer}
           isOnBreak={isOnBreak}
@@ -1006,7 +1402,9 @@ export function LiveScoringV4({
             <div
               className={cn(
                 "border-l-4 p-4",
-                !batchesConfirmed ? "bg-yellow-50 border-yellow-400" : "bg-orange-50 border-orange-400"
+                !batchesConfirmed
+                  ? "bg-yellow-50 border-yellow-400"
+                  : "bg-orange-50 border-orange-400"
               )}
               role="alert"
             >
@@ -1019,10 +1417,20 @@ export function LiveScoringV4({
                   )}
                 </div>
                 <div>
-                  <p className={cn("font-bold", !batchesConfirmed ? "text-yellow-800" : "text-orange-800")}>
+                  <p
+                    className={cn(
+                      "font-bold",
+                      !batchesConfirmed ? "text-yellow-800" : "text-orange-800"
+                    )}
+                  >
                     {!batchesConfirmed ? "Batches Not Set" : "Timer Paused"}
                   </p>
-                  <p className={cn("text-sm", !batchesConfirmed ? "text-yellow-700" : "text-orange-700")}>
+                  <p
+                    className={cn(
+                      "text-sm",
+                      !batchesConfirmed ? "text-yellow-700" : "text-orange-700"
+                    )}
+                  >
                     {!batchesConfirmed
                       ? 'Click "Set Batches" to assign defender batches.'
                       : 'Scoring is disabled. Press "Start" to resume.'}
@@ -1035,7 +1443,8 @@ export function LiveScoringV4({
           {substituteMode && attackerToSwap && (
             <div className="bg-yellow-50 border border-yellow-300 rounded-lg p-4">
               <p className="text-yellow-900">
-                🔄 Substitution Mode: Select a substitute player to replace <strong>{attackerToSwap.name}</strong>
+                🔄 Substitution Mode: Select a substitute player to replace{" "}
+                <strong>{attackerToSwap.name}</strong>
               </p>
             </div>
           )}
@@ -1044,9 +1453,13 @@ export function LiveScoringV4({
             <Card className="border border-gray-300 shadow-sm">
               <CardHeader className="border-b bg-blue-50 py-2 flex flex-wrap items-center justify-between">
                 <div className="flex gap-2 items-center">
-                  <CardTitle className="text-sm text-blue-900">Defenders</CardTitle>
+                  <CardTitle className="text-sm text-blue-900">
+                    Defenders
+                  </CardTitle>
                   <p className="text-xs text-blue-700">
-                    {currentDefendingTeam === "A" ? match.teamA.name : match.teamB.name}
+                    {currentDefendingTeam === "A"
+                      ? match.teamA.name
+                      : match.teamB.name}
                   </p>
                 </div>
 
@@ -1058,7 +1471,9 @@ export function LiveScoringV4({
                     disabled={
                       isTimerRunning ||
                       isOnBreak ||
-                      (currentDefendingTeam === "A" ? teamADefenderSubUsed[currentInning] : teamBDefenderSubUsed[currentInning])
+                      (currentDefendingTeam === "A"
+                        ? teamADefenderSubUsed[currentInning]
+                        : teamBDefenderSubUsed[currentInning])
                     }
                     className="text-xs h-7 px-2 border-orange-300 text-orange-700 hover:bg-orange-100 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
@@ -1078,34 +1493,41 @@ export function LiveScoringV4({
                         : "border-blue-300 text-blue-700 hover:bg-blue-100"
                     )}
                   >
-                    {batchesConfirmed ? <Check className="w-3 h-3 mr-1" /> : <Users className="w-3 h-3 mr-1" />}
+                    {batchesConfirmed ? (
+                      <Check className="w-3 h-3 mr-1" />
+                    ) : (
+                      <Users className="w-3 h-3 mr-1" />
+                    )}
                     {batchesConfirmed ? "View Batches" : "Set Batches"}
                   </Button>
                 </div>
               </CardHeader>
               <CardContent className="p-3">
-                 {/* NEW: Use Previous Batches Button */}
-                 {!batchesConfirmed && (
-                  (currentDefendingTeam === 'A' && savedBatchesA) || (currentDefendingTeam === 'B' && savedBatchesB)
-                 ) ? (
-                   <div className="mb-3 p-2 bg-blue-50 border border-blue-200 rounded-lg flex flex-col gap-2">
-                     <p className="text-xs text-blue-800 text-center">Previous batch configuration available.</p>
-                     <Button 
-                       onClick={handleUsePreviousBatches}
-                       disabled={isOnBreak}
-                       className="w-full bg-blue-600 hover:bg-blue-700 h-8 text-xs"
-                     >
-                       <History className="w-3 h-3 mr-2" />
-                       Use Previous Batches
-                     </Button>
-                   </div>
-                 ) : null}
+                {!batchesConfirmed &&
+                ((currentDefendingTeam === "A" && savedBatchesA) ||
+                  (currentDefendingTeam === "B" && savedBatchesB)) ? (
+                  <div className="mb-3 p-2 bg-blue-50 border border-blue-200 rounded-lg flex flex-col gap-2">
+                    <p className="text-xs text-blue-800 text-center">
+                      Previous batch configuration available.
+                    </p>
+                    <Button
+                      onClick={handleUsePreviousBatches}
+                      disabled={isOnBreak}
+                      className="w-full bg-blue-600 hover:bg-blue-700 h-8 text-xs"
+                    >
+                      <History className="w-3 h-3 mr-2" />
+                      Use Previous Batches
+                    </Button>
+                  </div>
+                ) : null}
 
                 {showDefenderSubModal ? (
                   <div className="space-y-3">
                     {!defenderToSwapOut ? (
                       <>
-                        <p className="text-sm font-medium text-center">Select Defender to Substitute Out:</p>
+                        <p className="text-sm font-medium text-center">
+                          Select Defender to Substitute Out:
+                        </p>
                         <div className="grid grid-cols-3 gap-2">
                           {allPlayingDefenders.map((player) => (
                             <button
@@ -1117,7 +1539,9 @@ export function LiveScoringV4({
                                 <div className="w-9 h-9 bg-gradient-to-br from-gray-500 to-gray-700 rounded-full flex items-center justify-center text-white mx-auto mb-1">
                                   {player.jerseyNumber}
                                 </div>
-                                <p className="text-[10px] text-gray-900 truncate">{player.name}</p>
+                                <p className="text-[10px] text-gray-900 truncate">
+                                  {player.name}
+                                </p>
                               </div>
                             </button>
                           ))}
@@ -1125,30 +1549,44 @@ export function LiveScoringV4({
                       </>
                     ) : (
                       <>
-                        <p className="text-sm font-medium text-center">Select Substitute to Bring In (for {defenderToSwapOut.name}):</p>
+                        <p className="text-sm font-medium text-center">
+                          Select Substitute to Bring In (for{" "}
+                          {defenderToSwapOut.name}):
+                        </p>
                         <div className="grid grid-cols-3 gap-2">
                           {defenderSubstitutes.length > 0 ? (
                             defenderSubstitutes.map((player) => (
                               <button
                                 key={player.id}
-                                onClick={() => handleSelectDefenderSubstitute(player)}
+                                onClick={() =>
+                                  handleSelectDefenderSubstitute(player)
+                                }
                                 className="p-2 rounded-lg border-2 border-green-400 hover:border-green-600 hover:bg-green-50 transition-all"
                               >
                                 <div className="text-center">
                                   <div className="w-9 h-9 bg-gradient-to-br from-green-600 to-emerald-600 rounded-full flex items-center justify-center text-white mx-auto mb-1">
                                     {player.jerseyNumber}
                                   </div>
-                                  <p className="text-[10px] text-gray-900 truncate">{player.name}</p>
+                                  <p className="text-[10px] text-gray-900 truncate">
+                                    {player.name}
+                                  </p>
                                 </div>
                               </button>
                             ))
                           ) : (
-                            <p className="col-span-3 text-center text-gray-500">No substitutes available.</p>
+                            <p className="col-span-3 text-center text-gray-500">
+                              No substitutes available.
+                            </p>
                           )}
                         </div>
                       </>
                     )}
-                    <Button variant="outline" size="sm" onClick={handleCancelDefenderSub} className="w-full">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleCancelDefenderSub}
+                      className="w-full"
+                    >
                       Cancel Substitution
                     </Button>
                   </div>
@@ -1161,23 +1599,52 @@ export function LiveScoringV4({
                     ) : (
                       <div className="space-y-3">
                         {defenderBatches.map((batch, batchIndex) => (
-                          <div key={`batch-${batchIndex}`} className={cn("border-t pt-2", batchIndex === 0 && "border-t-0 pt-0")}>
+                          <div
+                            key={`batch-${batchIndex}`}
+                            className={cn(
+                              "border-t pt-2",
+                              batchIndex === 0 && "border-t-0 pt-0"
+                            )}
+                          >
                             <Badge
-                              variant={batchIndex === activeBatchIndex ? "default" : "secondary"}
-                              className={cn("mb-2", batchIndex === activeBatchIndex ? "bg-blue-600 animate-pulse" : "bg-gray-400 opacity-70")}
+                              variant={
+                                batchIndex === activeBatchIndex
+                                  ? "default"
+                                  : "secondary"
+                              }
+                              className={cn(
+                                "mb-2",
+                                batchIndex === activeBatchIndex
+                                  ? "bg-blue-600 animate-pulse"
+                                  : "bg-gray-400 opacity-70"
+                              )}
                             >
-                              Batch {batchIndex + 1} {batchIndex === activeBatchIndex ? "(Active)" : ""}
+                              Batch {batchIndex + 1}{" "}
+                              {batchIndex === activeBatchIndex
+                                ? "(Active)"
+                                : ""}
                             </Badge>
                             <div className="grid grid-cols-3 gap-2">
                               {batch.map((player) => {
-                                const isOut = defendersOutIdsInActiveBatch.has(player.id);
-                                const isActiveBatch = batchIndex === activeBatchIndex;
-                                const isDisabled = !isTimerRunning || substituteMode || !isActiveBatch || isOut || showDefenderSubModal;
+                                const isOut = defendersOutIdsInActiveBatch.has(
+                                  player.id
+                                );
+                                const isActiveBatch =
+                                  batchIndex === activeBatchIndex;
+                                const isDisabled =
+                                  !isTimerRunning ||
+                                  substituteMode ||
+                                  !isActiveBatch ||
+                                  isOut ||
+                                  showDefenderSubModal;
 
                                 return (
                                   <button
                                     key={player.id}
-                                    onClick={() => !isDisabled && handleDefenderSelect(player)}
+                                    onClick={() =>
+                                      !isDisabled &&
+                                      handleDefenderSelect(player)
+                                    }
                                     disabled={isDisabled}
                                     className={cn(
                                       `p-2 rounded-lg border-2 transition-all duration-200`,
@@ -1193,13 +1660,31 @@ export function LiveScoringV4({
                                     )}
                                   >
                                     <div className="text-center">
-                                      <div className={cn(`w-9 h-9 rounded-full flex items-center justify-center mx-auto mb-1 text-white`, isOut || !isActiveBatch ? "bg-gray-400" : "bg-gradient-to-br from-blue-600 to-indigo-600")}>
+                                      <div
+                                        className={cn(
+                                          `w-9 h-9 rounded-full flex items-center justify-center mx-auto mb-1 text-white`,
+                                          isOut || !isActiveBatch
+                                            ? "bg-gray-400"
+                                            : "bg-gradient-to-br from-blue-600 to-indigo-600"
+                                        )}
+                                      >
                                         {player.jerseyNumber}
                                       </div>
-                                      <p className={cn(`text-[10px] truncate leading-tight`, isOut || !isActiveBatch ? "text-gray-400" : "text-gray-900")}>
+                                      <p
+                                        className={cn(
+                                          `text-[10px] truncate leading-tight`,
+                                          isOut || !isActiveBatch
+                                            ? "text-gray-400"
+                                            : "text-gray-900"
+                                        )}
+                                      >
                                         {player.name}
                                       </p>
-                                      {isOut && <p className="text-[8px] text-red-500 mt-0.5">OUT</p>}
+                                      {isOut && (
+                                        <p className="text-[8px] text-red-500 mt-0.5">
+                                          OUT
+                                        </p>
+                                      )}
                                     </div>
                                   </button>
                                 );
@@ -1216,9 +1701,13 @@ export function LiveScoringV4({
 
             <Card className="border border-gray-300 shadow-sm">
               <CardHeader className="border-b bg-red-50 py-2">
-                <CardTitle className="text-sm text-red-900">Attackers</CardTitle>
+                <CardTitle className="text-sm text-red-900">
+                  Attackers
+                </CardTitle>
                 <p className="text-xs text-red-700 mt-0.5">
-                  {currentDefendingTeam === "A" ? match.teamB.name : match.teamA.name}
+                  {currentDefendingTeam === "A"
+                    ? match.teamB.name
+                    : match.teamA.name}
                 </p>
               </CardHeader>
               <CardContent className="p-3">
@@ -1243,14 +1732,18 @@ export function LiveScoringV4({
                             <div className="w-9 h-9 bg-gradient-to-br from-red-600 to-pink-600 rounded-full flex items-center justify-center text-white mx-auto mb-1">
                               {player.jerseyNumber}
                             </div>
-                            <p className="text-[10px] text-gray-900 truncate leading-tight">{player.name}</p>
+                            <p className="text-[10px] text-gray-900 truncate leading-tight">
+                              {player.name}
+                            </p>
                           </div>
                         </button>
                       ))}
                     </div>
                     <Button
                       onClick={handleSubstituteClick}
-                      disabled={!selectedAttacker || !isTimerRunning || isOnBreak}
+                      disabled={
+                        !selectedAttacker || !isTimerRunning || isOnBreak
+                      }
                       variant="outline"
                       size="sm"
                       className="w-full border-2 border-red-600 text-red-600 hover:bg-red-50 transition-all"
@@ -1261,7 +1754,9 @@ export function LiveScoringV4({
                   </>
                 ) : (
                   <div className="space-y-2">
-                    <p className="text-xs text-gray-600 mb-2">Select substitute:</p>
+                    <p className="text-xs text-gray-600 mb-2">
+                      Select substitute:
+                    </p>
                     <div className="grid grid-cols-3 gap-2">
                       {attackerSubstitutes.map((player) => (
                         <button
@@ -1273,7 +1768,9 @@ export function LiveScoringV4({
                             <div className="w-9 h-9 bg-gradient-to-br from-green-600 to-emerald-600 rounded-full flex items-center justify-center text-white mx-auto mb-1">
                               {player.jerseyNumber}
                             </div>
-                            <p className="text-[10px] text-gray-900 truncate leading-tight">{player.name}</p>
+                            <p className="text-[10px] text-gray-900 truncate leading-tight">
+                              {player.name}
+                            </p>
                           </div>
                         </button>
                       ))}
@@ -1303,12 +1800,19 @@ export function LiveScoringV4({
                 <div className="grid grid-cols-3 gap-2 mb-2">
                   {SYMBOLS.map((symbol) => {
                     const isSingle = symbol.singlePlayer;
-                    const isDisabled = !isTimerRunning || isOnBreak || substituteMode || (!isSingle && (!selectedDefender || !selectedAttacker)) || (isSingle && !selectedDefender && !selectedAttacker);
+                    const isDisabled =
+                      !isTimerRunning ||
+                      isOnBreak ||
+                      substituteMode ||
+                      (!isSingle && (!selectedDefender || !selectedAttacker)) ||
+                      (isSingle && !selectedDefender && !selectedAttacker);
 
                     return (
                       <button
                         key={symbol.type}
-                        onClick={() => handleSymbolSelect(symbol.type as SymbolType)}
+                        onClick={() =>
+                          handleSymbolSelect(symbol.type as SymbolType)
+                        }
                         disabled={isDisabled}
                         className={cn(
                           `p-2 rounded-lg border-2 transition-all duration-200 hover:scale-105 min-h-[60px] flex flex-col justify-center`,
@@ -1319,8 +1823,12 @@ export function LiveScoringV4({
                         )}
                       >
                         <div className="text-center">
-                          <p className="text-xs leading-tight font-medium text-gray-900">{symbol.name}</p>
-                          <p className="text-[10px] text-gray-500 mt-0.5">({symbol.abbr}){symbol.singlePlayer ? " *" : ""}</p>
+                          <p className="text-xs leading-tight font-medium text-gray-900">
+                            {symbol.name}
+                          </p>
+                          <p className="text-[10px] text-gray-500 mt-0.5">
+                            ({symbol.abbr}){symbol.singlePlayer ? " *" : ""}
+                          </p>
                         </div>
                       </button>
                     );
@@ -1333,15 +1841,22 @@ export function LiveScoringV4({
                     !isTimerRunning ||
                     isOnBreak ||
                     !selectedSymbol ||
-                    (!SYMBOLS.find((s) => s.type === selectedSymbol)?.singlePlayer && (!selectedDefender || !selectedAttacker)) ||
-                    (SYMBOLS.find((s) => s.type === selectedSymbol)?.singlePlayer && !selectedDefender && !selectedAttacker)
+                    (!SYMBOLS.find((s) => s.type === selectedSymbol)
+                      ?.singlePlayer &&
+                      (!selectedDefender || !selectedAttacker)) ||
+                    (SYMBOLS.find((s) => s.type === selectedSymbol)
+                      ?.singlePlayer &&
+                      !selectedDefender &&
+                      !selectedAttacker)
                   }
                   className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 h-12 shadow-lg transition-all"
                 >
                   {isConfirming ? "Confirming..." : "Confirm Action"}
                 </Button>
                 {SYMBOLS.some((s) => s.singlePlayer) && (
-                  <p className="text-[10px] text-gray-500 text-center mt-1">* Single player symbols (select D or A)</p>
+                  <p className="text-[10px] text-gray-500 text-center mt-1">
+                    * Single player symbols (select D or A)
+                  </p>
                 )}
               </CardContent>
             </Card>

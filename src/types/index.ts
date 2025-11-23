@@ -16,7 +16,8 @@ export interface User {
   id: string;
   name: string;
   email: string;
-  role: "admin" | "scorer";
+  // Added 'viewer' to role
+  role: "admin" | "scorer" | "viewer";
 }
 
 export interface Tournament {
@@ -62,10 +63,10 @@ export interface Match {
   scorerName?: string;
   scoreA?: number;
   scoreB?: number;
-  innings?: number; // << ADDED or CONFIRMED
-  turnDuration?: number; // in seconds // << ADDED or CONFIRME
-  playersPerTeam?: 7 | 9; // <-- Add this line if missing
-  tossWinner?: "A" | "B"; // <-- Add if needed for reconstruction
+  innings?: number;
+  turnDuration?: number; // in seconds
+  playersPerTeam?: 7 | 9;
+  tossWinner?: "A" | "B";
   tossDecision?: "attack" | "defend";
 }
 
@@ -99,6 +100,11 @@ export interface ScoringAction {
   perTime: number; // Time defender was active
   timestamp: string;
   scoringTeamId: string; // ID of the team that scored
+  currentInning?: number;
+  currentTurn?: number;
+  turnStartTime?: string;
+  // Added for compatibility with Viewer components (optional)
+  team?: "A" | "B";
 }
 
 export interface DefenderScore {
@@ -117,6 +123,8 @@ export interface AttackerScore {
   defendersOut: string[]; // List of defender names
   inning: number;
 }
+
+// --- Viewer Specific Interfaces ---
 
 export interface LiveMatch extends Match {
   currentInning: number;

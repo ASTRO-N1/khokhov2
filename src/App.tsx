@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { AdminLayout } from "./components/AdminLayout";
 import { ScorerLayout } from "./components/ScorerLayout";
+import { ViewerLayout } from "./components/ViewerLayout";
 import { Toaster } from "./components/ui/sonner";
 import { AdminHome } from "./components/admin/AdminHome";
 import { MatchesPageEnhanced } from "./components/admin/MatchesPageEnhanced";
@@ -41,13 +42,29 @@ import {
   MatchSetupEnhanced,
   MatchSetupData,
 } from "./components/scorer/MatchSetupEnhanced";
-import { mockMatches, mockTournaments, mockTeams } from "./utils/mockData";
-import { User as UserType, Match, Tournament, ScoringAction } from "./types";
-import { supabase } from "./supabaseClient";
-import { toast } from "sonner";
 import { TurnByTurnResultView } from "./components/TurnByTurnResultView";
 
-// --- Helper Wrappers for Routing ---
+// --- Viewer Imports ---
+import { TournamentListPage } from "./components/viewer/TournamentListPage";
+import { TournamentDetailsPage as ViewerTournamentDetailsPage } from "./components/viewer/TournamentDetailsPage";
+import { LiveMatchPage } from "./components/viewer/LiveMatchPage";
+import { TeamPage } from "./components/viewer/TeamPage";
+
+import { mockMatches, mockTournaments, mockTeams } from "./utils/mockData";
+import {
+  User as UserType,
+  Match,
+  Tournament,
+  ScoringAction,
+  Team,
+  LiveMatch,
+} from "./types";
+import { supabase } from "./supabaseClient";
+import { toast } from "sonner";
+
+// ==========================================
+// 1. HELPER WRAPPERS (Admin & Scorer)
+// ==========================================
 
 function TournamentEditorWrapper() {
   const { tournamentId } = useParams();
@@ -111,8 +128,8 @@ function MatchResultWrapper() {
         .select(
           `
           *,
-          team_a:teams!matches_team_a_id_fkey(*, players!team_id(*)),
-          team_b:teams!matches_team_b_id_fkey(*, players!team_id(*)),
+          team_a:teams!team_a_id(*, players!team_id(*)),
+          team_b:teams!team_b_id(*, players!team_id(*)),
           tournament:tournaments(*),
           scorer:profiles(name)
         `
@@ -178,26 +195,6 @@ function MatchResultWrapper() {
   );
 }
 
-function TournamentDetailsWrapper() {
-  const { tournamentId } = useParams();
-  const navigate = useNavigate();
-  const onNavigate = (path: string) => navigate(path);
-  const tournament = mockTournaments.find(
-    (t) => t.id === tournamentId
-  ) as unknown as Tournament;
-
-  if (!tournament) return <Navigate to="/admin/tournaments" replace />;
-
-  return (
-    <TournamentDetailsPage
-      tournament={tournament}
-      matches={mockMatches}
-      teams={mockTeams}
-      onBack={() => onNavigate("/admin/tournaments")}
-    />
-  );
-}
-
 function MatchSetupWrapper({
   match,
   onBack,
@@ -205,7 +202,8 @@ function MatchSetupWrapper({
 }: {
   match: Match | null;
   onBack: () => void;
-  onStartMatch: (setupData: MatchSetupData) => void;
+  // FIX: Update signature to accept matchId
+  onStartMatch: (setupData: MatchSetupData, matchId: string) => void;
 }) {
   const { matchId } = useParams();
   const navigate = useNavigate();
@@ -224,7 +222,8 @@ function MatchSetupWrapper({
     <MatchSetupEnhanced
       match={matchData}
       onBack={onBack}
-      onStartMatch={onStartMatch}
+      // FIX: Pass the ID explicitly so the handler knows what to update
+      onStartMatch={(data) => onStartMatch(data, matchData.id)}
     />
   );
 }
@@ -258,6 +257,539 @@ function LiveScoringWrapper({
   );
 }
 
+// ==========================================
+// 2. VIEWER WRAPPERS
+// ==========================================
+
+function ViewerHomeWrapper() {
+  const navigate = useNavigate();
+  const [tournaments, setTournaments] = useState<Tournament[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchTournaments = async () => {
+      const { data, error } = await supabase
+        .from("tournaments")
+        .select("*")
+        .order("start_date", { ascending: false });
+
+      if (data) {
+        const formatted: Tournament[] = data.map((t: any) => ({
+          id: t.id,
+          name: t.name,
+          startDate: t.start_date,
+          endDate: t.end_date,
+          location: t.location,
+          type: t.type || "Standard",
+          status: t.status,
+        }));
+        setTournaments(formatted);
+      }
+      setLoading(false);
+    };
+    fetchTournaments();
+  }, []);
+
+  if (loading) return <div className="p-8 text-center">Loading...</div>;
+
+  return (
+    <TournamentListPage
+      tournaments={tournaments}
+      onViewTournament={(id) => navigate(`/viewer/tournament/${id}`)}
+    />
+  );
+}
+
+function ViewerTournamentDetailsWrapper() {
+  const { tournamentId } = useParams();
+  const navigate = useNavigate();
+  const [tournament, setTournament] = useState<Tournament | null>(null);
+  const [matches, setMatches] = useState<Match[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      if (!tournamentId) return;
+
+      const { data: tData } = await supabase
+        .from("tournaments")
+        .select("*")
+        .eq("id", tournamentId)
+        .single();
+
+      if (tData) {
+        setTournament({
+          id: tData.id,
+          name: tData.name,
+          startDate: tData.start_date,
+          endDate: tData.end_date,
+          location: tData.location,
+          type: tData.type,
+          status: tData.status,
+        });
+      }
+
+      const { data: mData, error: mError } = await supabase
+        .from("matches")
+        .select(`*, team_a:teams!team_a_id(*), team_b:teams!team_b_id(*)`)
+        .eq("tournament_id", tournamentId)
+        .order("match_datetime", { ascending: true });
+
+      if (mData) {
+        const formattedMatches: Match[] = mData.map((m: any) => ({
+          id: m.id,
+          matchNumber: m.match_number,
+          tournamentId: m.tournament_id,
+          tournamentName: tData?.name || "",
+          teamA: {
+            id: m.team_a?.id,
+            name: m.team_a?.name,
+            logo: m.team_a?.logo_url || m.team_a?.logo,
+            players: [],
+            captain: "",
+          },
+          teamB: {
+            id: m.team_b?.id,
+            name: m.team_b?.name,
+            logo: m.team_b?.logo_url || m.team_b?.logo,
+            players: [],
+            captain: "",
+          },
+          dateTime: m.match_datetime,
+          venue: m.venue,
+          status: m.status,
+          scoreA: m.score_a,
+          scoreB: m.score_b,
+        }));
+        setMatches(formattedMatches);
+      }
+
+      const { data: teamData } = await supabase.from("teams").select("*");
+      if (teamData) {
+        setTeams(
+          teamData.map((t: any) => ({
+            id: t.id,
+            name: t.name,
+            captain: t.captain_name,
+            players: [],
+          }))
+        );
+      }
+      setLoading(false);
+    };
+    fetchData();
+  }, [tournamentId]);
+
+  if (loading) return <div>Loading details...</div>;
+  if (!tournament) return <Navigate to="/viewer/home" replace />;
+
+  return (
+    <ViewerTournamentDetailsPage
+      tournament={tournament}
+      matches={matches}
+      teams={teams}
+      onBack={() => navigate("/viewer/home")}
+      onViewMatch={(id) => navigate(`/viewer/match/${id}`)}
+      onViewTeam={(id) => navigate(`/viewer/team/${id}`)}
+      onViewStandings={() => {}}
+    />
+  );
+}
+
+function ViewerLiveMatchWrapper() {
+  const { matchId } = useParams();
+  const navigate = useNavigate();
+  const [match, setMatch] = useState<LiveMatch | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!matchId) return;
+
+    const fetchMatch = async () => {
+      const { data, error } = await supabase
+        .from("matches")
+        .select(`*, team_a:teams!team_a_id(*), team_b:teams!team_b_id(*)`)
+        .eq("id", matchId)
+        .single();
+
+      if (data) {
+        const { data: actionsData } = await supabase
+          .from("scoring_actions")
+          .select("*")
+          .eq("match_id", matchId)
+          .order("created_at", { ascending: true });
+
+        const actions = actionsData
+          ? actionsData.map((a: any) => ({
+              ...a,
+              matchId: a.match_id,
+              attackerName: a.attacker_name,
+              defenderName: a.defender_name,
+              attackerJersey: a.attacker_jersey,
+              defenderJersey: a.defender_jersey,
+              scoringTeamId: a.scoring_team_id,
+              timestamp: a.created_at,
+              team: a.scoring_team_id === data.team_a_id ? "A" : "B",
+            }))
+          : [];
+
+        const liveScoreA = actions
+          .filter((a: any) => a.scoringTeamId === data.team_a_id)
+          .reduce((sum: number, a: any) => sum + (a.points || 0), 0);
+
+        const liveScoreB = actions
+          .filter((a: any) => a.scoringTeamId === data.team_b_id)
+          .reduce((sum: number, a: any) => sum + (a.points || 0), 0);
+
+        const liveMatch: LiveMatch = {
+          id: data.id,
+          matchNumber: data.match_number,
+          tournamentId: data.tournament_id,
+          tournamentName: "Kho Kho Tournament",
+          teamA: {
+            id: data.team_a?.id,
+            name: data.team_a?.name,
+            captain: data.team_a?.captain_name,
+            players: [],
+            logo: data.team_a?.logo_url || data.team_a?.logo,
+          },
+          teamB: {
+            id: data.team_b?.id,
+            name: data.team_b?.name,
+            captain: data.team_b?.captain_name,
+            players: [],
+            logo: data.team_b?.logo_url || data.team_b?.logo,
+          },
+          dateTime: data.match_datetime,
+          venue: data.venue,
+          status: data.status,
+          scoreA: liveScoreA,
+          scoreB: liveScoreB,
+          currentInning: data.current_inning || 1,
+          currentTurn: data.current_turn || 1,
+          attackingTeam: "A",
+          turnStartTime: data.turn_start_time || data.match_datetime,
+          turnTimeRemaining: 0,
+          actions: actions,
+        };
+        setMatch(liveMatch);
+      }
+      setLoading(false);
+    };
+
+    fetchMatch();
+
+    const subscription = supabase
+      .channel(`match-${matchId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "scoring_actions",
+          filter: `match_id=eq.${matchId}`,
+        },
+        () => fetchMatch()
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "matches",
+          filter: `id=eq.${matchId}`,
+        },
+        () => fetchMatch()
+      )
+      .subscribe();
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [matchId]);
+
+  if (loading) return <div>Loading match...</div>;
+  if (!match) return <div>Match not found</div>;
+
+  return (
+    <LiveMatchPage
+      match={match}
+      onBack={() => navigate(`/viewer/tournament/${match.tournamentId}`)}
+    />
+  );
+}
+
+function ViewerTeamWrapper() {
+  const { teamId } = useParams();
+  const navigate = useNavigate();
+  const [team, setTeam] = useState<Team | null>(null);
+  const [matches, setMatches] = useState<Match[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchTeamData = async () => {
+      if (!teamId) return;
+      const { data: tData } = await supabase
+        .from("teams")
+        .select(`*, players(*)`)
+        .eq("id", teamId)
+        .single();
+
+      if (tData) {
+        setTeam({
+          id: tData.id,
+          name: tData.name,
+          captain: tData.captain_name,
+          coach: tData.coach_name,
+          logo: tData.logo_url,
+          players: tData.players.map((p: any) => ({
+            ...p,
+            jerseyNumber: p.jersey_number,
+            isActive: p.is_active,
+            isCaptain: p.is_captain,
+          })),
+        });
+      }
+
+      const { data: mData } = await supabase
+        .from("matches")
+        .select(
+          `*, team_a:teams!team_a_id(id,name), team_b:teams!team_b_id(id,name)`
+        )
+        .or(`team_a_id.eq.${teamId},team_b_id.eq.${teamId}`)
+        .order("match_datetime", { ascending: false });
+
+      if (mData) {
+        const formattedMatches: Match[] = mData.map((m: any) => ({
+          id: m.id,
+          matchNumber: m.match_number,
+          tournamentId: m.tournament_id,
+          tournamentName: "",
+          teamA: {
+            id: m.team_a.id,
+            name: m.team_a.name,
+            captain: "",
+            players: [],
+          },
+          teamB: {
+            id: m.team_b.id,
+            name: m.team_b.name,
+            captain: "",
+            players: [],
+          },
+          dateTime: m.match_datetime,
+          venue: m.venue,
+          status: m.status,
+          scoreA: m.score_a,
+          scoreB: m.score_b,
+        }));
+        setMatches(formattedMatches);
+      }
+      setLoading(false);
+    };
+    fetchTeamData();
+  }, [teamId]);
+
+  if (loading) return <div>Loading team...</div>;
+  if (!team) return <Navigate to="/viewer/home" replace />;
+
+  return <TeamPage team={team} matches={matches} onBack={() => navigate(-1)} />;
+}
+
+function ViewerRouter({
+  currentUser,
+  onLogout,
+}: {
+  currentUser: UserType;
+  onLogout: () => void;
+}) {
+  return (
+    <ViewerLayout onLogout={onLogout} userName={currentUser.name}>
+      <Routes>
+        <Route path="home" element={<ViewerHomeWrapper />} />
+        <Route
+          path="tournament/:tournamentId"
+          element={<ViewerTournamentDetailsWrapper />}
+        />
+        <Route path="match/:matchId" element={<ViewerLiveMatchWrapper />} />
+        <Route path="team/:teamId" element={<ViewerTeamWrapper />} />
+        <Route path="/" element={<Navigate to="home" replace />} />
+        <Route path="*" element={<Navigate to="home" replace />} />
+      </Routes>
+    </ViewerLayout>
+  );
+}
+
+// ==========================================
+// 3. SCORER ROUTER (FIXED STATUS LOGIC)
+// ==========================================
+
+function ScorerRouter({
+  currentUser,
+  onLogout,
+  selectedMatch,
+  setSelectedMatch,
+  matchSetupData,
+  setMatchSetupData,
+}: {
+  currentUser: UserType;
+  onLogout: () => void;
+  selectedMatch: Match | null;
+  setSelectedMatch: React.Dispatch<React.SetStateAction<Match | null>>;
+  matchSetupData: MatchSetupData | null;
+  setMatchSetupData: React.Dispatch<
+    React.SetStateAction<MatchSetupData | null>
+  >;
+}) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const onBackToHome = () => navigate("/scorer/home");
+  const onBackFromScoring = () => {
+    setSelectedMatch(null);
+    setMatchSetupData(null);
+    navigate("/scorer/home");
+  };
+
+  // --- UPDATED HANDLE START MATCH ---
+  const handleStartMatch = (match: Match) => {
+    setSelectedMatch(match);
+
+    if (match.status === "live") {
+      // If match is already live, bypass setup and resume scoring
+      // We construct a basic setupData object; LiveScoringV4 will
+      // hydrate the actual game state (innings, batches, etc.) from localStorage.
+      const resumeSetupData: MatchSetupData = {
+        teamAPlaying: match.teamA.players,
+        teamASubstitutes: [],
+        teamBPlaying: match.teamB.players,
+        teamBSubstitutes: [],
+        tossWinner: (match.tossWinner as "A" | "B") || "A",
+        tossDecision: (match.tossDecision as "attack" | "defend") || "attack",
+        playersPerTeam: match.playersPerTeam || 9,
+        timerDuration: match.turnDuration || 540,
+      };
+      setMatchSetupData(resumeSetupData);
+      navigate(`/scorer/match/${match.id}/live`);
+    } else {
+      // For upcoming matches, go to setup
+      navigate(`/scorer/match/${match.id}/setup`);
+    }
+  };
+
+  // FIX: Accept matchId explicitly to handle state loss or refresh
+  const handleMatchSetupComplete = async (
+    setupData: MatchSetupData,
+    matchId?: string
+  ) => {
+    setMatchSetupData(setupData);
+
+    // Use the explicitly passed matchId OR fall back to state
+    const targetMatchId = matchId || selectedMatch?.id;
+
+    if (targetMatchId) {
+      const { error } = await supabase
+        .from("matches")
+        .update({
+          status: "live",
+          toss_winner: setupData.tossWinner,
+          toss_decision: setupData.tossDecision,
+          turn_start_time: new Date().toISOString(), // Fix Timer Sync
+        })
+        .eq("id", targetMatchId);
+
+      if (error) {
+        toast.error("Failed to start match: " + error.message);
+        console.error(error);
+      } else {
+        toast.success("Match is now LIVE!");
+        // Update state if available
+        if (selectedMatch) {
+          selectedMatch.status = "live";
+        }
+      }
+      navigate(`/scorer/match/${targetMatchId}/live`);
+    } else {
+      toast.error("Error: Match ID not found.");
+    }
+  };
+
+  const handleEndMatch = async (actions: ScoringAction[]) => {
+    if (!selectedMatch) return;
+    let scoreA = 0;
+    let scoreB = 0;
+    actions.forEach((action) => {
+      const scoringId = (action as any).scoring_team_id || action.scoringTeamId;
+      if (scoringId === selectedMatch.teamA.id) scoreA += action.points;
+      else if (scoringId === selectedMatch.teamB.id) scoreB += action.points;
+    });
+
+    const { error } = await supabase
+      .from("matches")
+      .update({ status: "finished", score_a: scoreA, score_b: scoreB })
+      .eq("id", selectedMatch.id);
+
+    if (error) {
+      toast.error(`Failed: ${error.message}`);
+    } else {
+      toast.success("Match ended.");
+      onBackFromScoring();
+    }
+  };
+
+  return (
+    <ScorerLayout
+      onLogout={onLogout}
+      userName={currentUser.name}
+      showHeader={!location.pathname.includes("/live")}
+      onBack={location.pathname.includes("/setup") ? onBackToHome : undefined}
+    >
+      <Routes>
+        <Route
+          path="home"
+          element={
+            <ScorerHomeEnhanced
+              user={currentUser}
+              onStartMatch={handleStartMatch}
+            />
+          }
+        />
+        <Route
+          path="match/:matchId/setup"
+          element={
+            <MatchSetupWrapper
+              match={selectedMatch}
+              onBack={onBackToHome}
+              onStartMatch={handleMatchSetupComplete}
+            />
+          }
+        />
+        <Route
+          path="match/:matchId/live"
+          element={
+            <LiveScoringWrapper
+              match={selectedMatch}
+              setupData={matchSetupData}
+              onEndMatch={handleEndMatch}
+              onBack={onBackFromScoring}
+            />
+          }
+        />
+        <Route
+          path="results/match/:matchId"
+          element={<TurnByTurnResultView />}
+        />
+        <Route path="/" element={<Navigate to="home" replace />} />
+        <Route path="*" element={<Navigate to="home" replace />} />
+      </Routes>
+    </ScorerLayout>
+  );
+}
+
+// ==========================================
+// 4. MAIN APP & AUTH
+// ==========================================
+
 function AdminRouter({
   currentUser,
   onLogout,
@@ -266,8 +798,8 @@ function AdminRouter({
   onLogout: () => void;
 }) {
   const navigate = useNavigate();
-  const onNavigate = (path: string) => navigate(path);
   const location = useLocation();
+  const onNavigate = (path: string) => navigate(path);
   const [finishedMatches, setFinishedMatches] = useState<Match[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -277,49 +809,41 @@ function AdminRouter({
       const { data, error } = await supabase
         .from("matches")
         .select(
-          `
-          *,
-          team_a:teams!matches_team_a_id_fkey(*),
-          team_b:teams!matches_team_b_id_fkey(*),
-          tournament:tournaments(*),
-          scorer:profiles(name)
-        `
+          `*, team_a:teams!matches_team_a_id_fkey(*), team_b:teams!matches_team_b_id_fkey(*), tournament:tournaments(*), scorer:profiles(name)`
         )
         .eq("status", "finished")
         .order("match_datetime", { ascending: false });
 
-      if (error) {
-        toast.error("Failed to fetch finished matches.");
-      } else if (data) {
-        const formattedMatches: Match[] = data.map((m: any) => ({
-          id: m.id,
-          matchNumber: m.match_number,
-          tournamentId: m.tournament.id,
-          tournamentName: m.tournament.name,
-          teamA: {
-            id: m.team_a.id,
-            name: m.team_a.name,
-            captain: m.team_a.captain_name,
-            players: [],
-          },
-          teamB: {
-            id: m.team_b.id,
-            name: m.team_b.name,
-            captain: m.team_b.captain_name,
-            players: [],
-          },
-          dateTime: m.match_datetime,
-          venue: m.venue,
-          status: m.status,
-          scoreA: m.score_a,
-          scoreB: m.score_b,
-          scorerName: m.scorer?.name || "Not Assigned",
-        }));
-        setFinishedMatches(formattedMatches);
+      if (data) {
+        setFinishedMatches(
+          data.map((m: any) => ({
+            id: m.id,
+            matchNumber: m.match_number,
+            tournamentId: m.tournament.id,
+            tournamentName: m.tournament.name,
+            teamA: {
+              id: m.team_a.id,
+              name: m.team_a.name,
+              captain: m.team_a.captain_name,
+              players: [],
+            },
+            teamB: {
+              id: m.team_b.id,
+              name: m.team_b.name,
+              captain: m.team_b.captain_name,
+              players: [],
+            },
+            dateTime: m.match_datetime,
+            venue: m.venue,
+            status: m.status,
+            scoreA: m.score_a,
+            scoreB: m.score_b,
+            scorerName: m.scorer?.name || "Not Assigned",
+          }))
+        );
       }
       setLoading(false);
     };
-
     fetchFinishedMatches();
   }, []);
 
@@ -357,7 +881,7 @@ function AdminRouter({
           path="results"
           element={
             loading ? (
-              <div>Loading results...</div>
+              <div>Loading...</div>
             ) : (
               <ResultsPage
                 matches={finishedMatches}
@@ -377,205 +901,68 @@ function AdminRouter({
   );
 }
 
-function ScorerRouter({
-  currentUser,
-  onLogout,
-  selectedMatch,
-  setSelectedMatch,
-  matchSetupData,
-  setMatchSetupData,
-}: {
-  currentUser: UserType;
-  onLogout: () => void;
-  selectedMatch: Match | null;
-  setSelectedMatch: React.Dispatch<React.SetStateAction<Match | null>>;
-  matchSetupData: MatchSetupData | null;
-  setMatchSetupData: React.Dispatch<
-    React.SetStateAction<MatchSetupData | null>
-  >;
-}) {
-  const navigate = useNavigate();
-  const location = useLocation();
-  const onBackToHome = () => navigate("/scorer/home");
-  const onBackFromScoring = () => {
-    setSelectedMatch(null);
-    setMatchSetupData(null);
-    navigate("/scorer/home");
-  };
-
-  const handleStartMatch = (match: Match) => {
-    setSelectedMatch(match);
-    navigate(`/scorer/match/${match.id}/setup`);
-  };
-
-  const handleMatchSetupComplete = (setupData: MatchSetupData) => {
-    setMatchSetupData(setupData);
-    navigate(`/scorer/match/${selectedMatch?.id}/live`);
-  };
-
-  const handleEndMatch = async (actions: ScoringAction[]) => {
-    if (!selectedMatch) return;
-
-    let scoreA = 0;
-    let scoreB = 0;
-
-    actions.forEach((action) => {
-      const scoringId = (action as any).scoring_team_id || action.scoringTeamId;
-
-      if (scoringId === selectedMatch.teamA.id) {
-        scoreA += action.points;
-      } else if (scoringId === selectedMatch.teamB.id) {
-        scoreB += action.points;
-      }
-    });
-
-    const { error } = await supabase
-      .from("matches")
-      .update({
-        status: "finished",
-        score_a: scoreA,
-        score_b: scoreB,
-      })
-      .eq("id", selectedMatch.id);
-
-    if (error) {
-      toast.error(`Failed to end match: ${error.message}`);
-    } else {
-      selectedMatch.scoreA = scoreA;
-      selectedMatch.scoreB = scoreB;
-      selectedMatch.status = "finished";
-      toast.success("Match has been successfully ended and results are saved.");
-      onBackFromScoring();
-    }
-  };
-
-  return (
-    <ScorerLayout
-      onLogout={onLogout}
-      userName={currentUser.name}
-      showHeader={!location.pathname.includes("/live")}
-      onBack={location.pathname.includes("/setup") ? onBackToHome : undefined}
-    >
-      <Routes>
-        <Route
-          path="home"
-          element={
-            <ScorerHomeEnhanced
-              user={currentUser}
-              onStartMatch={handleStartMatch}
-            />
-          }
-        />
-
-        <Route
-          path="match/:matchId/setup"
-          element={
-            <MatchSetupWrapper
-              match={selectedMatch}
-              onBack={onBackToHome}
-              onStartMatch={handleMatchSetupComplete}
-            />
-          }
-        />
-
-        <Route
-          path="match/:matchId/live"
-          element={
-            <LiveScoringWrapper
-              match={selectedMatch}
-              setupData={matchSetupData}
-              onEndMatch={handleEndMatch}
-              onBack={onBackFromScoring}
-            />
-          }
-        />
-
-        <Route
-          path="results/match/:matchId"
-          element={<TurnByTurnResultView />}
-        />
-
-        <Route path="/" element={<Navigate to="home" replace />} />
-        <Route path="*" element={<Navigate to="home" replace />} />
-      </Routes>
-    </ScorerLayout>
-  );
-}
-
 export default function App() {
   const [sessionChecked, setSessionChecked] = useState(false);
   const [currentUser, setCurrentUser] = useState<UserType | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
-
   const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
   const [matchSetupData, setMatchSetupData] = useState<MatchSetupData | null>(
     null
   );
-
   const navigate = useNavigate();
 
   useEffect(() => {
-    const checkSessionAndProfile = async () => {
+    const checkSession = async () => {
       const {
         data: { session },
       } = await supabase.auth.getSession();
-      if (session?.user) {
-        await fetchAndSetUserProfile(session.user);
-      }
+      if (session?.user) await fetchAndSetUserProfile(session.user);
       setSessionChecked(true);
     };
-
-    checkSessionAndProfile();
-
+    checkSession();
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) {
-        fetchAndSetUserProfile(session.user);
-      } else {
+      if (session?.user) fetchAndSetUserProfile(session.user);
+      else {
         setCurrentUser(null);
         navigate("/", { replace: true });
       }
     });
-
     return () => subscription.unsubscribe();
   }, []);
 
   const fetchAndSetUserProfile = async (authUser: any) => {
-    const { data: profile, error } = await supabase
+    const { data: profile } = await supabase
       .from("profiles")
       .select("role, name")
       .eq("id", authUser.id)
       .single();
-
-    if (error) {
-      toast.error("Could not fetch user profile.");
-      await supabase.auth.signOut();
-      return;
-    }
-
     if (profile) {
       const user: UserType = {
         id: authUser.id,
         name: profile.name || authUser.email,
-        email: authUser.email as string,
-        role: profile.role as "admin" | "scorer",
+        email: authUser.email,
+        role: profile.role,
       };
       setCurrentUser(user);
-
       if (
         profile.role === "admin" &&
         !window.location.pathname.startsWith("/admin")
-      ) {
+      )
         navigate("/admin/home", { replace: true });
-      } else if (
+      else if (
         profile.role === "scorer" &&
         !window.location.pathname.startsWith("/scorer")
-      ) {
+      )
         navigate("/scorer/home", { replace: true });
-      }
+      else if (
+        profile.role === "viewer" &&
+        !window.location.pathname.startsWith("/viewer")
+      )
+        navigate("/viewer/home", { replace: true });
     }
   };
 
@@ -583,29 +970,21 @@ export default function App() {
     e.preventDefault();
     setError(null);
     const { data, error } = await supabase.auth.signInWithPassword({
-      email: email,
-      password: password,
+      email,
+      password,
     });
-    if (error) {
-      setError(error.message);
-      return;
-    }
-    if (data.user) {
-      await fetchAndSetUserProfile(data.user);
-    }
+    if (error) setError(error.message);
+    else if (data.user) await fetchAndSetUserProfile(data.user);
   };
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-  };
+  const handleLogout = async () => await supabase.auth.signOut();
 
-  if (!sessionChecked) {
+  if (!sessionChecked)
     return (
       <div className="min-h-screen flex items-center justify-center">
         <p>Loading...</p>
       </div>
     );
-  }
 
   return (
     <>
@@ -628,7 +1007,6 @@ export default function App() {
             )
           }
         />
-
         {currentUser?.role === "admin" && (
           <Route
             path="/admin/*"
@@ -637,7 +1015,6 @@ export default function App() {
             }
           />
         )}
-
         {currentUser?.role === "scorer" && (
           <Route
             path="/scorer/*"
@@ -653,7 +1030,14 @@ export default function App() {
             }
           />
         )}
-
+        {currentUser?.role === "viewer" && (
+          <Route
+            path="/viewer/*"
+            element={
+              <ViewerRouter currentUser={currentUser} onLogout={handleLogout} />
+            }
+          />
+        )}
         <Route
           path="*"
           element={

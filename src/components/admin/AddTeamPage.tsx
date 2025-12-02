@@ -196,7 +196,6 @@ export function AddTeamPage() {
   };
 
   const handleSubmit = async () => {
-    // ... (handleSubmit logic remains the same)
     const captainJerseyNum = parseInt(captainJersey);
     if (!selectedTournamentId) {
       toast.error("Please select a tournament for this team.");
@@ -221,6 +220,25 @@ export function AddTeamPage() {
     } = await supabase.auth.getUser();
     if (!user) {
       toast.error("You must be logged in to create a team.");
+      setLoading(false);
+      return;
+    }
+
+    // CHECK FOR DUPLICATE TEAM NAME IN THIS TOURNAMENT
+    const { data: existingTeams, error: checkError } = await supabase
+      .from("teams")
+      .select("id")
+      .eq("tournament_id", selectedTournamentId)
+      .ilike("name", teamName);
+
+    if (checkError) {
+      toast.error("Error checking for duplicate teams: " + checkError.message);
+      setLoading(false);
+      return;
+    }
+
+    if (existingTeams && existingTeams.length > 0) {
+      toast.error("A team with this name already exists in the selected tournament.");
       setLoading(false);
       return;
     }

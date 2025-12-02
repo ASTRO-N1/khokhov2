@@ -261,21 +261,12 @@ export function MatchesPageEnhanced() {
                 Watch Live
               </Button>
             )}
-            {match.status === "upcoming" && (
-              <Button
-                size="sm"
-                className="flex-1 bg-blue-600 hover:bg-blue-700"
-              >
-                <Play className="w-4 h-4 mr-2" />
-                Start
-              </Button>
-            )}
+            {/* Start Button Removed Here */}
             {match.status === "finished" && (
               <Button
                 size="sm"
                 className="flex-1 bg-green-600 hover:bg-green-700"
-                // --- NEW onClick ---
-                onClick={() => navigate(`/admin/results/match/${match.id}`)} // <-- CHANGE HERE
+                onClick={() => navigate(`/admin/results/match/${match.id}`)}
               >
                 <Eye className="w-4 h-4 mr-2" />
                 View
@@ -285,8 +276,10 @@ export function MatchesPageEnhanced() {
               onClick={() => navigate(`/admin/matches/edit/${match.id}`)}
               variant="outline"
               size="sm"
+              className={match.status === "upcoming" ? "flex-1" : ""} // Make edit button full width if it's the main action
             >
-              <Edit className="w-4 h-4" />
+              <Edit className="w-4 h-4 mr-2" />
+              Edit
             </Button>
             <Button
               onClick={() => setMatchToDelete(match)}

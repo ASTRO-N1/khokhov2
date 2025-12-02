@@ -18,7 +18,7 @@ import {
   SquareFunction,
   Eye,
   EyeOff,
-  ArrowLeft, // Added ArrowLeft for the new button
+  ArrowLeft,
 } from "lucide-react";
 import { AdminLayout } from "./components/AdminLayout";
 import { ScorerLayout } from "./components/ScorerLayout";
@@ -27,7 +27,6 @@ import { Toaster } from "./components/ui/sonner";
 import { AdminHome } from "./components/admin/AdminHome";
 import { MatchesPageEnhanced } from "./components/admin/MatchesPageEnhanced";
 import { TournamentsPage } from "./components/admin/TournamentsPage";
-import { TournamentDetailsPage } from "./components/admin/TournamentDetailsPage";
 import { TeamsPage } from "./components/admin/TeamsPage";
 import { CreateTournamentPage } from "./components/admin/CreateTournamentPage";
 import { EditTeamPage } from "./components/admin/EditTeamPage";
@@ -64,8 +63,7 @@ import { Security } from "./components/super-admin/Security";
 // --- Landing Page Import ---
 import { LandingPage } from "./components/landing/LandingPage";
 
-
-import { mockMatches, mockTournaments, mockTeams } from "./utils/mockData";
+import { mockMatches } from "./utils/mockData";
 import {
   User as UserType,
   Match,
@@ -217,7 +215,6 @@ function MatchSetupWrapper({
 }: {
   match: Match | null;
   onBack: () => void;
-  // FIX: Update signature to accept matchId
   onStartMatch: (setupData: MatchSetupData, matchId: string) => void;
 }) {
   const { matchId } = useParams();
@@ -237,7 +234,6 @@ function MatchSetupWrapper({
     <MatchSetupEnhanced
       match={matchData}
       onBack={onBack}
-      // FIX: Pass the ID explicitly so the handler knows what to update
       onStartMatch={(data) => onStartMatch(data, matchData.id)}
     />
   );
@@ -666,14 +662,10 @@ function ScorerRouter({
     navigate("/scorer/home");
   };
 
-  // --- UPDATED HANDLE START MATCH ---
   const handleStartMatch = (match: Match) => {
     setSelectedMatch(match);
 
     if (match.status === "live") {
-      // If match is already live, bypass setup and resume scoring
-      // We construct a basic setupData object; LiveScoringV4 will
-      // hydrate the actual game state (innings, batches, etc.) from localStorage.
       const resumeSetupData: MatchSetupData = {
         teamAPlaying: match.teamA.players,
         teamASubstitutes: [],
@@ -687,19 +679,16 @@ function ScorerRouter({
       setMatchSetupData(resumeSetupData);
       navigate(`/scorer/match/${match.id}/live`);
     } else {
-      // For upcoming matches, go to setup
       navigate(`/scorer/match/${match.id}/setup`);
     }
   };
 
-  // FIX: Accept matchId explicitly to handle state loss or refresh
   const handleMatchSetupComplete = async (
     setupData: MatchSetupData,
     matchId?: string
   ) => {
     setMatchSetupData(setupData);
 
-    // Use the explicitly passed matchId OR fall back to state
     const targetMatchId = matchId || selectedMatch?.id;
 
     if (targetMatchId) {
@@ -709,7 +698,7 @@ function ScorerRouter({
           status: "live",
           toss_winner: setupData.tossWinner,
           toss_decision: setupData.tossDecision,
-          turn_start_time: new Date().toISOString(), // Fix Timer Sync
+          turn_start_time: new Date().toISOString(),
         })
         .eq("id", targetMatchId);
 
@@ -718,7 +707,6 @@ function ScorerRouter({
         console.error(error);
       } else {
         toast.success("Match is now LIVE!");
-        // Update state if available
         if (selectedMatch) {
           selectedMatch.status = "live";
         }
@@ -816,14 +804,15 @@ function SuperAdminRouter({
   const location = useLocation();
 
   const onNavigate = (path: string) => navigate(path);
-  // Extract path segment after /superadmin/ for sidebar highlight
-  const currentPage = location.pathname.split("/superadmin/")[1] || "super-dashboard";
-  
+  const currentPage =
+    location.pathname.split("/superadmin/")[1] || "super-dashboard";
+
   return (
     <SuperAdminLayout
       currentPage={currentPage}
       onNavigate={(pageId) => onNavigate(`/superadmin/${pageId}`)}
       onLogout={onLogout}
+      userName={currentUser.name} // FIX: Pass userName prop to layout
     >
       <Routes>
         <Route path="super-dashboard" element={<SuperAdminDashboard />} />
@@ -994,23 +983,37 @@ export default function App() {
       .select("role, name")
       .eq("id", authUser.id)
       .single();
+
     if (profile) {
+      // NORMALIZE ROLE: 'super_admin' from DB becomes 'superadmin' for App logic
+      const normalizedRole =
+        profile.role === "super_admin" ? "superadmin" : profile.role;
+
       const user: UserType = {
         id: authUser.id,
         name: profile.name || authUser.email,
         email: authUser.email,
-        role: profile.role,
+        role: normalizedRole,
       };
       setCurrentUser(user);
-      
-      const role = profile.role;
-      const targetPath = `/${role}/home`.replace("/superadmin/home", "/superadmin/super-dashboard");
 
-      if (role === "admin" || role === "scorer" || role === "viewer" || role === "superadmin") {
-        if (!window.location.pathname.startsWith(targetPath.replace("/home", "").replace("/super-dashboard", ""))) {
-           navigate(targetPath, { replace: true });
+      const role = normalizedRole;
+      const targetPath = `/${role}/home`.replace(
+        "/superadmin/home",
+        "/superadmin/super-dashboard"
+      );
+
+      // Only navigate if we aren't already on a sub-page of that role
+      if (
+        role === "admin" ||
+        role === "scorer" ||
+        role === "viewer" ||
+        role === "superadmin"
+      ) {
+        if (!window.location.pathname.startsWith(`/${role}`)) {
+          navigate(targetPath, { replace: true });
         }
-      } 
+      }
     }
   };
 
@@ -1026,12 +1029,11 @@ export default function App() {
   };
 
   const handleLogout = async () => await supabase.auth.signOut();
-  
+
   // --- Landing Page Actions ---
   const handleStartLogin = () => navigate("/login");
   const handleViewViewer = () => navigate("/viewer/home");
   const handleGoHome = () => navigate("/");
-
 
   if (!sessionChecked)
     return (
@@ -1044,14 +1046,16 @@ export default function App() {
     <>
       <Toaster position="top-right" />
       <Routes>
-        {/* New: Root path / leads to LandingPage or redirects if logged in */}
         <Route
           path="/"
           element={
             currentUser ? (
-              <Navigate 
-                to={`/${currentUser.role}/home`.replace("/superadmin/home", "/superadmin/super-dashboard")} 
-                replace 
+              <Navigate
+                to={`/${currentUser.role}/home`.replace(
+                  "/superadmin/home",
+                  "/superadmin/super-dashboard"
+                )}
+                replace
               />
             ) : (
               <LandingPage
@@ -1061,14 +1065,16 @@ export default function App() {
             )
           }
         />
-        {/* New Login page route */}
         <Route
           path="/login"
           element={
             currentUser ? (
-              <Navigate 
-                to={`/${currentUser.role}/home`.replace("/superadmin/home", "/superadmin/super-dashboard")} 
-                replace 
+              <Navigate
+                to={`/${currentUser.role}/home`.replace(
+                  "/superadmin/home",
+                  "/superadmin/super-dashboard"
+                )}
+                replace
               />
             ) : (
               <LoginPage
@@ -1078,12 +1084,11 @@ export default function App() {
                 setPassword={setPassword}
                 error={error}
                 handleLogin={handleLogin}
-                onGoHome={handleGoHome} // Pass new prop
+                onGoHome={handleGoHome}
               />
             )
           }
         />
-        {/* NEW: SuperAdmin Route */}
         {currentUser?.role === "superadmin" && (
           <Route
             path="/superadmin/*"
@@ -1126,12 +1131,18 @@ export default function App() {
             }
           />
         )}
-        {/* Fallback route - directs back to home/landing or role dashboard */}
         <Route
           path="*"
           element={
             <Navigate
-              to={currentUser ? `/${currentUser.role}/home`.replace("/superadmin/home", "/superadmin/super-dashboard") : "/"}
+              to={
+                currentUser
+                  ? `/${currentUser.role}/home`.replace(
+                      "/superadmin/home",
+                      "/superadmin/super-dashboard"
+                    )
+                  : "/"
+              }
               replace
             />
           }
@@ -1148,7 +1159,7 @@ function LoginPage({
   setPassword,
   error,
   handleLogin,
-  onGoHome, // <-- New Prop
+  onGoHome,
 }: {
   email: string;
   setEmail: (email: string) => void;
@@ -1156,7 +1167,7 @@ function LoginPage({
   setPassword: (password: string) => void;
   error: string | null;
   handleLogin: (e: React.FormEvent) => Promise<void>;
-  onGoHome: () => void; // <-- New Prop Type
+  onGoHome: () => void;
 }) {
   const [showPassword, setShowPassword] = useState(false);
 
@@ -1244,7 +1255,6 @@ function LoginPage({
                 >
                   Sign In
                 </Button>
-                {/* NEW: Back to Home Button */}
                 <Button
                   type="button"
                   variant="outline"

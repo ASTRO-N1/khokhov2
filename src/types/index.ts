@@ -17,7 +17,7 @@ export interface User {
   name: string;
   email: string;
   // Added 'viewer' to role
-  role: "admin" | "scorer" | "viewer";
+  role: "admin" | "scorer" | "viewer" | "superadmin";
 }
 
 export interface Tournament {

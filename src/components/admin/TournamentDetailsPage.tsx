@@ -32,7 +32,7 @@ interface TeamStanding extends Team {
   won: number;
   lost: number;
   points: number;
-  nrr: number;
+  // nrr removed
 }
 
 export function TournamentDetailsPage({
@@ -85,7 +85,7 @@ export function TournamentDetailsPage({
     fetchData();
   }, [tournament.id]);
 
-  // Mock standings data for this tournament
+  // Mock standings data for this tournament - NRR removed
   const standings: TeamStanding[] = teams
     .map((team, index) => ({
       ...team,
@@ -93,7 +93,6 @@ export function TournamentDetailsPage({
       won: 3 - index,
       lost: index,
       points: (3 - index) * 2,
-      nrr: 2.0 - index * 0.5,
     }))
     .sort((a, b) => b.points - a.points);
 
@@ -290,7 +289,7 @@ export function TournamentDetailsPage({
                       <TableHead className="text-center">Won</TableHead>
                       <TableHead className="text-center">Lost</TableHead>
                       <TableHead className="text-center">Points</TableHead>
-                      <TableHead className="text-center">NRR</TableHead>
+                      {/* NRR Header Removed */}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -325,16 +324,7 @@ export function TournamentDetailsPage({
                         <TableCell className="text-center">
                           {team.points}
                         </TableCell>
-                        <TableCell className="text-center">
-                          <span
-                            className={
-                              team.nrr > 0 ? "text-green-600" : "text-red-600"
-                            }
-                          >
-                            {team.nrr > 0 ? "+" : ""}
-                            {team.nrr.toFixed(2)}
-                          </span>
-                        </TableCell>
+                        {/* NRR Cell Removed */}
                       </TableRow>
                     ))}
                   </TableBody>
@@ -346,9 +336,7 @@ export function TournamentDetailsPage({
                 <ul className="text-sm text-gray-600 space-y-1">
                   <li>• Win: 2 points</li>
                   <li>• Loss: 0 points</li>
-                  <li>
-                    • NRR: Net Run Rate (calculated based on scoring rate)
-                  </li>
+                  {/* NRR Explanation Removed */}
                 </ul>
               </div>
             </CardContent>

@@ -18,6 +18,7 @@ import {
   SquareFunction,
   Eye,
   EyeOff,
+  ArrowLeft, // Added ArrowLeft for the new button
 } from "lucide-react";
 import { AdminLayout } from "./components/AdminLayout";
 import { ScorerLayout } from "./components/ScorerLayout";
@@ -49,6 +50,20 @@ import { TournamentListPage } from "./components/viewer/TournamentListPage";
 import { TournamentDetailsPage as ViewerTournamentDetailsPage } from "./components/viewer/TournamentDetailsPage";
 import { LiveMatchPage } from "./components/viewer/LiveMatchPage";
 import { TeamPage } from "./components/viewer/TeamPage";
+
+// --- Super Admin Imports ---
+import { SuperAdminLayout } from "./components/SuperAdminLayout";
+import { SuperAdminDashboard } from "./components/super-admin/SuperAdminDashboard";
+import { AdminManagement } from "./components/super-admin/AdminManagement";
+import { SubscriptionPlans } from "./components/super-admin/SubscriptionPlans";
+import { PlatformSettings } from "./components/super-admin/PlatformSettings";
+import { ActivityLogs } from "./components/super-admin/ActivityLogs";
+import { Analytics } from "./components/super-admin/Analytics";
+import { Security } from "./components/super-admin/Security";
+
+// --- Landing Page Import ---
+import { LandingPage } from "./components/landing/LandingPage";
+
 
 import { mockMatches, mockTournaments, mockTeams } from "./utils/mockData";
 import {
@@ -481,7 +496,7 @@ function ViewerLiveMatchWrapper() {
     fetchMatch();
 
     const subscription = supabase
-      .channel(`match-${matchId}`)
+      .channel(`match-viewer-${match.id}`)
       .on(
         "postgres_changes",
         {
@@ -787,7 +802,46 @@ function ScorerRouter({
 }
 
 // ==========================================
-// 4. MAIN APP & AUTH
+// 4. SUPER ADMIN ROUTER
+// ==========================================
+
+function SuperAdminRouter({
+  currentUser,
+  onLogout,
+}: {
+  currentUser: UserType;
+  onLogout: () => void;
+}) {
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const onNavigate = (path: string) => navigate(path);
+  // Extract path segment after /superadmin/ for sidebar highlight
+  const currentPage = location.pathname.split("/superadmin/")[1] || "super-dashboard";
+  
+  return (
+    <SuperAdminLayout
+      currentPage={currentPage}
+      onNavigate={(pageId) => onNavigate(`/superadmin/${pageId}`)}
+      onLogout={onLogout}
+    >
+      <Routes>
+        <Route path="super-dashboard" element={<SuperAdminDashboard />} />
+        <Route path="super-admins" element={<AdminManagement />} />
+        <Route path="super-plans" element={<SubscriptionPlans />} />
+        <Route path="super-settings" element={<PlatformSettings />} />
+        <Route path="super-logs" element={<ActivityLogs />} />
+        <Route path="super-analytics" element={<Analytics />} />
+        <Route path="super-security" element={<Security />} />
+        <Route path="/" element={<Navigate to="super-dashboard" replace />} />
+        <Route path="*" element={<Navigate to="super-dashboard" replace />} />
+      </Routes>
+    </SuperAdminLayout>
+  );
+}
+
+// ==========================================
+// 5. MAIN APP & AUTH
 // ==========================================
 
 function AdminRouter({
@@ -948,21 +1002,15 @@ export default function App() {
         role: profile.role,
       };
       setCurrentUser(user);
-      if (
-        profile.role === "admin" &&
-        !window.location.pathname.startsWith("/admin")
-      )
-        navigate("/admin/home", { replace: true });
-      else if (
-        profile.role === "scorer" &&
-        !window.location.pathname.startsWith("/scorer")
-      )
-        navigate("/scorer/home", { replace: true });
-      else if (
-        profile.role === "viewer" &&
-        !window.location.pathname.startsWith("/viewer")
-      )
-        navigate("/viewer/home", { replace: true });
+      
+      const role = profile.role;
+      const targetPath = `/${role}/home`.replace("/superadmin/home", "/superadmin/super-dashboard");
+
+      if (role === "admin" || role === "scorer" || role === "viewer" || role === "superadmin") {
+        if (!window.location.pathname.startsWith(targetPath.replace("/home", "").replace("/super-dashboard", ""))) {
+           navigate(targetPath, { replace: true });
+        }
+      } 
     }
   };
 
@@ -978,6 +1026,12 @@ export default function App() {
   };
 
   const handleLogout = async () => await supabase.auth.signOut();
+  
+  // --- Landing Page Actions ---
+  const handleStartLogin = () => navigate("/login");
+  const handleViewViewer = () => navigate("/viewer/home");
+  const handleGoHome = () => navigate("/");
+
 
   if (!sessionChecked)
     return (
@@ -990,10 +1044,33 @@ export default function App() {
     <>
       <Toaster position="top-right" />
       <Routes>
+        {/* New: Root path / leads to LandingPage or redirects if logged in */}
         <Route
           path="/"
           element={
-            !currentUser ? (
+            currentUser ? (
+              <Navigate 
+                to={`/${currentUser.role}/home`.replace("/superadmin/home", "/superadmin/super-dashboard")} 
+                replace 
+              />
+            ) : (
+              <LandingPage
+                onGetStarted={handleStartLogin}
+                onViewDemo={handleViewViewer}
+              />
+            )
+          }
+        />
+        {/* New Login page route */}
+        <Route
+          path="/login"
+          element={
+            currentUser ? (
+              <Navigate 
+                to={`/${currentUser.role}/home`.replace("/superadmin/home", "/superadmin/super-dashboard")} 
+                replace 
+              />
+            ) : (
               <LoginPage
                 email={email}
                 setEmail={setEmail}
@@ -1001,12 +1078,23 @@ export default function App() {
                 setPassword={setPassword}
                 error={error}
                 handleLogin={handleLogin}
+                onGoHome={handleGoHome} // Pass new prop
               />
-            ) : (
-              <Navigate to={`/${currentUser.role}/home`} replace />
             )
           }
         />
+        {/* NEW: SuperAdmin Route */}
+        {currentUser?.role === "superadmin" && (
+          <Route
+            path="/superadmin/*"
+            element={
+              <SuperAdminRouter
+                currentUser={currentUser}
+                onLogout={handleLogout}
+              />
+            }
+          />
+        )}
         {currentUser?.role === "admin" && (
           <Route
             path="/admin/*"
@@ -1038,11 +1126,12 @@ export default function App() {
             }
           />
         )}
+        {/* Fallback route - directs back to home/landing or role dashboard */}
         <Route
           path="*"
           element={
             <Navigate
-              to={currentUser ? `/${currentUser.role}/home` : "/"}
+              to={currentUser ? `/${currentUser.role}/home`.replace("/superadmin/home", "/superadmin/super-dashboard") : "/"}
               replace
             />
           }
@@ -1059,6 +1148,7 @@ function LoginPage({
   setPassword,
   error,
   handleLogin,
+  onGoHome, // <-- New Prop
 }: {
   email: string;
   setEmail: (email: string) => void;
@@ -1066,6 +1156,7 @@ function LoginPage({
   setPassword: (password: string) => void;
   error: string | null;
   handleLogin: (e: React.FormEvent) => Promise<void>;
+  onGoHome: () => void; // <-- New Prop Type
 }) {
   const [showPassword, setShowPassword] = useState(false);
 
@@ -1146,12 +1237,24 @@ function LoginPage({
                   </Button>
                 </div>
               </div>
-              <Button
-                type="submit"
-                className="w-full h-12 bg-blue-600 hover:bg-blue-700 text-white transition-colors duration-200"
-              >
-                Sign In
-              </Button>
+              <div className="space-y-3">
+                <Button
+                  type="submit"
+                  className="w-full h-12 bg-blue-600 hover:bg-blue-700 text-white transition-colors duration-200"
+                >
+                  Sign In
+                </Button>
+                {/* NEW: Back to Home Button */}
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={onGoHome}
+                  className="w-full h-12"
+                >
+                  <ArrowLeft className="w-4 h-4 mr-2" />
+                  Back to Home
+                </Button>
+              </div>
             </form>
           </CardContent>
         </Card>

@@ -1,7 +1,5 @@
-// design/src/components/TurnByTurnResultView.tsx
-
 import React, { useState, useEffect, useMemo } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { supabase } from "../supabaseClient";
 import { Match, ScoringAction, Team, Player, SymbolType } from "../types"; // Ensure SymbolType is imported
 import { Button } from "./ui/button";
@@ -123,12 +121,12 @@ interface TurnAttackerStat {
 export function TurnByTurnResultView() {
   const { matchId } = useParams<{ matchId: string }>();
   const navigate = useNavigate();
+  const location = useLocation(); // Hook to access navigation state
   const [match, setMatch] = useState<Match | null>(null);
-  // Store actions using the more specific DbScoringAction type if possible
-  const [actions, setActions] = useState<any[]>([]); // Use any initially, refine later if needed
+  const [actions, setActions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [currentTurnNumber, setCurrentTurnNumber] = useState(1); // Turn number (1, 2, 3, 4...)
+  const [currentTurnNumber, setCurrentTurnNumber] = useState(1);
   const [showSummaryModal, setShowSummaryModal] = useState(false);
 
   // Calculate total turns once actions are loaded
@@ -139,7 +137,6 @@ export function TurnByTurnResultView() {
 
   useEffect(() => {
     const fetchData = async () => {
-      // ...(Data fetching logic remains the same as previous step)...
       if (!matchId) {
         setError("Match ID is missing.");
         setLoading(false);
@@ -171,7 +168,7 @@ export function TurnByTurnResultView() {
         const formattedMatch: Match = {
           id: matchData.id,
           matchNumber:
-            matchData.match_number || `M-${matchData.id.substring(0, 4)}`, // Fallback match number
+            matchData.match_number || `M-${matchData.id.substring(0, 4)}`,
           tournamentId: matchData.tournament.id,
           tournamentName: matchData.tournament.name,
           teamA: {
@@ -224,7 +221,7 @@ export function TurnByTurnResultView() {
             `Failed to fetch scoring actions: ${actionsError.message}`
           );
 
-        setActions(actionsData || []); // Ensure actions is an array
+        setActions(actionsData || []);
       } catch (err: any) {
         setError(err.message);
         toast.error(err.message);
@@ -236,7 +233,6 @@ export function TurnByTurnResultView() {
     fetchData();
   }, [matchId]);
 
-  // ---- Logic to determine data for the CURRENT turn ----
   const currentTurnData = useMemo(() => {
     if (
       !match ||
@@ -249,9 +245,8 @@ export function TurnByTurnResultView() {
 
     const inningNumber = Math.ceil(currentTurnNumber / 2);
 
-    // Determine who was defending (careful with null checks for tossWinner/Decision)
-    const tossWinner = match.tossWinner || "A"; // Default assumption if null
-    const tossDecision = match.tossDecision || "attack"; // Default assumption if null
+    const tossWinner = match.tossWinner || "A";
+    const tossDecision = match.tossDecision || "attack";
 
     const isTeamADefending =
       (tossWinner === "A" &&
@@ -284,7 +279,6 @@ export function TurnByTurnResultView() {
       .filter((a) => getStringValue(a, "scoring_team_id") === match.teamB.id)
       .reduce((sum, a) => sum + getNumValue(a, "points"), 0);
 
-    // --- Calculate Turn-Specific Defender Stats ---
     const defenderStats: TurnDefenderStat[] = turnActions
       .filter((action) => getStringValue(action, "defenderName"))
       .map((action) => ({
@@ -296,7 +290,6 @@ export function TurnByTurnResultView() {
         symbol: (getStringValue(action, "symbol") as SymbolType) || "unknown",
       }));
 
-    // --- Calculate Turn-Specific Attacker Stats ---
     const attackerStatsMap: { [key: number]: TurnAttackerStat } = {};
     turnActions.forEach((action) => {
       const attackerJersey = getNumValue(action, "attackerJersey");
@@ -304,7 +297,7 @@ export function TurnByTurnResultView() {
       const defenderName = getStringValue(action, "defenderName");
       const points = getNumValue(action, "points");
 
-      if (!attackerJersey || !attackerName) return; // Skip if no attacker involved
+      if (!attackerJersey || !attackerName) return;
 
       if (!attackerStatsMap[attackerJersey]) {
         attackerStatsMap[attackerJersey] = {
@@ -316,7 +309,6 @@ export function TurnByTurnResultView() {
       }
       attackerStatsMap[attackerJersey].points += points;
       if (defenderName && points > 0) {
-        // Only count defenders out if points were scored
         attackerStatsMap[attackerJersey].defendersOut.push(defenderName);
       }
     });
@@ -335,12 +327,10 @@ export function TurnByTurnResultView() {
     };
   }, [match, actions, currentTurnNumber, totalTurns]);
 
-  // ---- Navigation Handlers ----
   const goToNextTurn = () => {
     if (currentTurnNumber < totalTurns) {
       setCurrentTurnNumber((prev) => prev + 1);
     } else if (currentTurnNumber === totalTurns) {
-      // Show summary modal when clicking next on the last turn
       setShowSummaryModal(true);
     }
   };
@@ -352,24 +342,31 @@ export function TurnByTurnResultView() {
   };
 
   const handleGoBack = () => {
-    navigate(-1); // Go back to the previous page in history
+    navigate(-1);
   };
 
-  // Reconstruct setupData for ConsolidatedReport (basic version)
+  // --- NEW HANDLER FOR CLOSING SUMMARY ---
+  const handleCloseSummary = () => {
+    setShowSummaryModal(false);
+    // If navigated from live scoring finish flow, redirect to home
+    if (location.state?.returnToHome) {
+      navigate('/scorer/home');
+    }
+  };
+
   const reconstructedSetupData: MatchSetupData | undefined = match
     ? {
-        teamAPlaying: match.teamA.players, // Assuming players array holds all members
+        teamAPlaying: match.teamA.players,
         teamASubstitutes: [],
         teamBPlaying: match.teamB.players,
         teamBSubstitutes: [],
         tossWinner: (match.tossWinner as "A" | "B") || "A",
         tossDecision: (match.tossDecision as "attack" | "defend") || "attack",
-        playersPerTeam: (match.playersPerTeam as 7 | 9) || 9, // Default to 9 if missing
-        timerDuration: match.turnDuration || 540, // Default to 9 mins if missing
+        playersPerTeam: (match.playersPerTeam as 7 | 9) || 9,
+        timerDuration: match.turnDuration || 540,
       }
     : undefined;
 
-  // ---- Render Logic ----
   if (loading) {
     return (
       <div className="p-6 text-center">
@@ -406,7 +403,6 @@ export function TurnByTurnResultView() {
   }
 
   if (!currentTurnData && totalTurns > 0) {
-    // This case should ideally not happen if totalTurns is calculated correctly
     return (
       <div className="p-6 space-y-4">
         <Button onClick={handleGoBack} variant="outline" size="sm">
@@ -419,7 +415,6 @@ export function TurnByTurnResultView() {
     );
   }
 
-  // Handle case with no actions recorded at all
   if (totalTurns === 0 && !loading) {
     return (
       <div className="p-6 space-y-4 max-w-xl mx-auto">
@@ -441,16 +436,12 @@ export function TurnByTurnResultView() {
     );
   }
 
-  // --- Main Turn Display ---
   return (
     <div className="p-4 md:p-6 space-y-4 max-w-7xl mx-auto pb-20">
-      {" "}
-      {/* Added bottom padding */}
       <div className="flex justify-between items-center">
         <Button onClick={handleGoBack} variant="outline" size="sm">
           <ArrowLeft className="w-4 h-4 mr-2" /> Back to Results
         </Button>
-        {/* Show View Summary button only on the last turn */}
         {currentTurnNumber === totalTurns && (
           <Button
             onClick={() => setShowSummaryModal(true)}
@@ -462,10 +453,8 @@ export function TurnByTurnResultView() {
           </Button>
         )}
       </div>
-      {/* --- ADD CHECK HERE --- */}
       {currentTurnData ? (
         <>
-          {/* Turn Header */}
           <Card className="shadow-md overflow-hidden">
             <CardHeader className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white p-4 md:p-6">
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center">
@@ -507,9 +496,7 @@ export function TurnByTurnResultView() {
             </CardHeader>
           </Card>
 
-          {/* Turn Details */}
           <div className="grid lg:grid-cols-2 gap-4">
-            {/* Defender Log */}
             <Card className="shadow-sm border-t-4 border-blue-500">
               <CardHeader className="bg-blue-50 border-b py-3 px-4">
                 <CardTitle className="text-base text-blue-800 flex items-center gap-2">
@@ -573,7 +560,6 @@ export function TurnByTurnResultView() {
               </CardContent>
             </Card>
 
-            {/* Attacker Log */}
             <Card className="shadow-sm border-t-4 border-red-500">
               <CardHeader className="bg-red-50 border-b py-3 px-4">
                 <CardTitle className="text-base text-red-800 flex items-center gap-2">
@@ -622,7 +608,6 @@ export function TurnByTurnResultView() {
             </Card>
           </div>
 
-          {/* Action Log */}
           <Card className="shadow-sm">
             <CardHeader className="bg-gray-100 border-b py-3 px-4">
               <CardTitle className="text-base text-gray-700 flex items-center gap-2">
@@ -697,7 +682,6 @@ export function TurnByTurnResultView() {
           </Card>
         </>
       ) : (
-        // Optional: Render a message or skeleton if currentTurnData is null but not loading/error
         !loading &&
         !error && (
           <Card>
@@ -707,8 +691,6 @@ export function TurnByTurnResultView() {
           </Card>
         )
       )}
-      {/* --- END OF CHECK --- */}
-      {/* Navigation */}
       <div className="flex justify-between items-center mt-6 sticky bottom-4 z-10 bg-white/80 backdrop-blur-sm p-3 rounded-lg shadow-md border">
         <Button
           onClick={goToPreviousTurn}
@@ -734,19 +716,16 @@ export function TurnByTurnResultView() {
           )}
         </Button>
       </div>
-      {/* Consolidated Report Modal */}
+      
+      {/* Consolidated Report Modal with Updated Close Handler */}
       <Dialog open={showSummaryModal} onOpenChange={setShowSummaryModal}>
-        {/* Apply max-height and overflow directly here */}
         <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto p-0">
-          {" "}
-          {/* Changed overflow-hidden to overflow-y-auto */}
-          {/* Render ConsolidatedReport - It should handle its internal scroll if needed */}
           {reconstructedSetupData && match && (
             <ConsolidatedReport
               match={match}
               setupData={reconstructedSetupData}
-              actions={actions as ScoringAction[]} // Cast might be needed
-              onClose={() => setShowSummaryModal(false)}
+              actions={actions as ScoringAction[]}
+              onClose={handleCloseSummary} // Use the custom handler here
             />
           )}
         </DialogContent>

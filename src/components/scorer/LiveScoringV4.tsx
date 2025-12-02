@@ -16,7 +16,7 @@ import { RefreshCw, Ban, Users, Check, RotateCcw, History } from "lucide-react";
 import { Match, Player, ScoringAction, SymbolType } from "../../types";
 import { MatchSetupData } from "./MatchSetupEnhanced";
 import { toast } from "sonner";
-import { ConsolidatedReport } from "./ConsolidatedReport"; // Keeping the original component
+import { ConsolidatedReport } from "./ConsolidatedReport";
 import { EditActionsPage } from "./EditActionsPage";
 import { supabase } from "../../supabaseClient";
 import { Scoreboard } from "./Scoreboard";
@@ -127,12 +127,19 @@ function useStickyState<T>(
       const stickyValue = window.localStorage.getItem(key);
       return stickyValue !== null ? JSON.parse(stickyValue) : defaultValue;
     } catch (error) {
+      console.error(`Error reading localStorage key "${key}":`, error);
       return defaultValue;
     }
   });
+
   useEffect(() => {
-    window.localStorage.setItem(key, JSON.stringify(value));
+    try {
+      window.localStorage.setItem(key, JSON.stringify(value));
+    } catch (error) {
+      console.error(`Error setting localStorage key "${key}":`, error);
+    }
   }, [key, value]);
+
   return [value, setValue];
 }
 
@@ -173,11 +180,12 @@ export function LiveScoringV4({
     0,
     `match_${match.id}_break_timer`
   );
-  const [breakType, setBreakType] = useStickyState<
-    "turn" | "inning" | null
-  >(null, `match_${match.id}_break_type`);
+  const [breakType, setBreakType] = useStickyState<"turn" | "inning" | null>(
+    null,
+    `match_${match.id}_break_type`
+  );
 
-  // Team & Player State (Persistent)
+  // Team & Player State (Persistent to handle reloads during subs)
   const [teamAPlaying, setTeamAPlaying] = useStickyState<Player[]>(
     setupData.teamAPlaying,
     `match_${match.id}_teamA_playing`
@@ -231,7 +239,7 @@ export function LiveScoringV4({
     `match_${match.id}_saved_batches_B`
   );
 
-  // --- Transient UI State ---
+  // --- Transient UI State (Resets on reload) ---
   const [showDefenderSubModal, setShowDefenderSubModal] = useState(false);
   const [defenderToSwapOut, setDefenderToSwapOut] = useState<Player | null>(
     null
@@ -286,14 +294,12 @@ export function LiveScoringV4({
   );
 
   const attackerSubstitutes = useMemo(
-    () =>
-      currentDefendingTeam === "A" ? teamBSubstitutes : teamASubstitutes,
+    () => (currentDefendingTeam === "A" ? teamBSubstitutes : teamASubstitutes),
     [currentDefendingTeam, teamBSubstitutes, teamASubstitutes]
   );
 
   const defenderSubstitutes = useMemo(
-    () =>
-      currentDefendingTeam === "A" ? teamASubstitutes : teamBSubstitutes,
+    () => (currentDefendingTeam === "A" ? teamASubstitutes : teamBSubstitutes),
     [currentDefendingTeam, teamASubstitutes, teamBSubstitutes]
   );
 
@@ -471,6 +477,7 @@ export function LiveScoringV4({
   };
 
   const updateMatchStatusToFinished = async () => {
+    // Calculate final scores locally to ensure accuracy
     const teamAId = match.teamA.id;
     const teamBId = match.teamB.id;
     const finalScoreA = actions
@@ -613,6 +620,8 @@ export function LiveScoringV4({
       syncTimerToDb(breakDuration, "break");
 
       toast.info(toastMessage);
+
+      // Don't clear batches yet, wait for startNextTurnActual
     },
     [
       isOnBreak,
@@ -625,7 +634,8 @@ export function LiveScoringV4({
     ]
   );
 
-  // --- Robust Timer Logic ---
+  // --- Robust Timer Logic (Fixed) ---
+  // 1. Pure Timer Update Loop
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null;
 
@@ -655,7 +665,7 @@ export function LiveScoringV4({
     setLastTick,
   ]);
 
-  // Timer Limit Watcher
+  // 2. Timer Limit Watcher
   useEffect(() => {
     if (timer >= maxTimerDuration && isTimerRunning) {
       setIsTimerRunning(false);
@@ -671,7 +681,7 @@ export function LiveScoringV4({
     setIsTimerRunning,
   ]);
 
-  // Break Timer Logic
+  // --- Break Timer Logic ---
   useEffect(() => {
     let breakInterval: NodeJS.Timeout | null = null;
     if (isOnBreak && breakTimer > 0) {
@@ -699,6 +709,7 @@ export function LiveScoringV4({
     }
   };
 
+  // --- Actions Handlers ---
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -813,6 +824,7 @@ export function LiveScoringV4({
       const scoring_team_id =
         currentDefendingTeam === "A" ? match.teamB.id : match.teamA.id;
 
+      // 1. Insert Action
       const newActionData: Omit<DbScoringAction, "id" | "created_at"> = {
         match_id: match.id,
         inning: currentInning,
@@ -839,8 +851,10 @@ export function LiveScoringV4({
 
       if (actionError) throw new Error(actionError.message);
 
+      // 2. Update Match Score in Real-time
       const pointsToAdd = symbolData.points;
       const isTeamAScoring = scoring_team_id === match.teamA.id;
+
       const newScoreA = isTeamAScoring
         ? scores.teamA + pointsToAdd
         : scores.teamA;
@@ -962,9 +976,7 @@ export function LiveScoringV4({
   const handleSubstituteSelect = (substitute: Player) => {
     if (!attackerToSwap) return;
     if (currentDefendingTeam === "A") {
-      const newPlaying = teamBPlaying.filter(
-        (p) => p.id !== attackerToSwap.id
-      );
+      const newPlaying = teamBPlaying.filter((p) => p.id !== attackerToSwap.id);
       newPlaying.push(substitute);
       const newSubstitutes = teamBSubstitutes.filter(
         (p) => p.id !== substitute.id
@@ -973,9 +985,7 @@ export function LiveScoringV4({
       setTeamBPlaying(newPlaying);
       setTeamBSubstitutes(newSubstitutes);
     } else {
-      const newPlaying = teamAPlaying.filter(
-        (p) => p.id !== attackerToSwap.id
-      );
+      const newPlaying = teamAPlaying.filter((p) => p.id !== attackerToSwap.id);
       newPlaying.push(substitute);
       const newSubstitutes = teamASubstitutes.filter(
         (p) => p.id !== substitute.id
@@ -991,7 +1001,7 @@ export function LiveScoringV4({
     setAttackerToSwap(null);
   };
 
-  // --- Defender Substitution ---
+  // --- Defender Substitution (Pre-Turn) ---
   const handleOpenDefenderSub = () => {
     if (isTimerRunning || isOnBreak) {
       toast.error("Can only substitute defenders before the turn starts.");
@@ -1069,6 +1079,55 @@ export function LiveScoringV4({
     setDefenderToSwapOut(null);
   };
 
+  // --- Selection Handlers ---
+  const handleDefenderSelect = (defender: Player) => {
+    if (activeDefenders.some((ad) => ad.id === defender.id)) {
+      setSelectedDefender((prev) =>
+        prev?.id === defender.id ? null : defender
+      );
+      setSelectedSymbol(null);
+    } else {
+      toast.error("This player is not in the active batch.");
+    }
+    setSubstituteMode(false);
+    setAttackerToSwap(null);
+  };
+
+  const handleAttackerSelect = (attacker: Player) => {
+    setSelectedAttacker((prev) => (prev?.id === attacker.id ? null : attacker));
+    setSelectedSymbol(null);
+  };
+
+  const handleSymbolSelect = (symbol: SymbolType) => {
+    const symbolData = SYMBOLS.find((s) => s.type === symbol);
+    if (!symbolData) return;
+
+    if (symbolData.singlePlayer) {
+      if (!selectedDefender && !selectedAttacker) {
+        toast.error(
+          "Please select either a defender OR an attacker for this symbol."
+        );
+        return;
+      }
+      if (selectedDefender && selectedAttacker) {
+        toast.info(
+          "Clearing attacker selection as this symbol applies to one player."
+        );
+        setSelectedAttacker(null);
+      }
+    } else {
+      if (!selectedDefender) {
+        toast.error("Please select a defender first.");
+        return;
+      }
+      if (!selectedAttacker) {
+        toast.error("Please select an attacker.");
+        return;
+      }
+    }
+    setSelectedSymbol(symbol);
+  };
+
   // --- Match End ---
   const handleEndMatch = () => {
     if (isOnBreak) {
@@ -1085,7 +1144,7 @@ export function LiveScoringV4({
   };
 
   const confirmEndMatch = async () => {
-    // 1. UPDATE DB IMMEDIATELY
+    // 1. UPDATE DB IMMEDIATELY (Viewers see "Finished")
     await updateMatchStatusToFinished();
 
     // 2. CLEAR LOCAL STORAGE
@@ -1115,19 +1174,26 @@ export function LiveScoringV4({
     setIsTimerRunning(false);
     setShowEndMatchConfirm(false);
 
-    // 3. Show Report in Full Screen Overlay (Logic Fix: Scroll to Top)
-    window.scrollTo(0, 0);
+    // 3. Show the Report Modal (Do NOT navigate away yet)
     setIsFinalReport(true);
     setShowConsolidatedReport(true);
   };
 
   const handleCloseReport = () => {
     setShowConsolidatedReport(false);
-    // Logic Fix: Navigate only on close
+
+    // 4. Navigate ONLY after closing the final report
     if (isFinalReport) {
       onEndMatch(actions as unknown as ScoringAction[]);
     }
+
     setIsFinalReport(false);
+  };
+
+  const handleCloseReportAndFinish = () => {
+    setShowConsolidatedReport(false);
+    setIsFinalReport(false);
+    // Navigation is handled by onEndMatch being called in confirmEndMatch
   };
 
   // --- Batch Modal Handlers ---
@@ -1136,11 +1202,13 @@ export function LiveScoringV4({
     setBatchesConfirmed(true);
     setActiveBatchIndex(0);
     setShowBatchModal(false);
+
     if (currentDefendingTeam === "A") {
       setSavedBatchesA(confirmedBatches);
     } else {
       setSavedBatchesB(confirmedBatches);
     }
+
     toast.success("Defender batches confirmed for this turn!");
   };
 
@@ -1157,7 +1225,7 @@ export function LiveScoringV4({
     }
   };
 
-  // --- Scoresheet Data ---
+  // --- Scoresheet Data Preparation ---
   const defenderScoresheet = useMemo(() => {
     return actions
       .filter(
@@ -1215,7 +1283,8 @@ export function LiveScoringV4({
           <AlertDialogHeader>
             <AlertDialogTitle>End Match</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure? This will finalize scores immediately.
+              Are you sure you want to end the match? This will finalize the
+              scores and show the final report.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1224,7 +1293,7 @@ export function LiveScoringV4({
               onClick={confirmEndMatch}
               className="bg-red-600 hover:bg-red-700"
             >
-              Yes, End Match
+              Yes, End Match & View Report
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1233,28 +1302,51 @@ export function LiveScoringV4({
       <AlertDialog open={showCardConfirm} onOpenChange={setShowCardConfirm}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Confirm Card</AlertDialogTitle>
+            <AlertDialogTitle>
+              {pendingCardAction?.symbol === "yellow-card"
+                ? "Yellow Card"
+                : "Red Card"}{" "}
+              Confirmation
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to issue a{" "}
+              {pendingCardAction?.symbol === "yellow-card"
+                ? "Yellow Card"
+                : "Red Card"}{" "}
+              to <strong>{pendingCardAction?.player?.name}</strong> (#
+              {pendingCardAction?.player?.jerseyNumber})?
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => setPendingCardAction(null)}>
               Cancel
             </AlertDialogCancel>
-            <AlertDialogAction onClick={confirmCardAction}>
-              Confirm
+            <AlertDialogAction
+              onClick={confirmCardAction}
+              className={
+                pendingCardAction?.symbol === "yellow-card"
+                  ? "bg-yellow-600 hover:bg-yellow-700"
+                  : "bg-red-600 hover:bg-red-700"
+              }
+            >
+              Confirm{" "}
+              {pendingCardAction?.symbol === "yellow-card"
+                ? "Yellow Card"
+                : "Red Card"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
       {showConsolidatedReport && (
-        <div className="fixed inset-0 z-50 bg-white overflow-y-auto animate-in fade-in-0">
-          <ConsolidatedReport
-            match={match}
-            setupData={setupData}
-            actions={actions as unknown as ScoringAction[]}
-            onClose={handleCloseReport}
-          />
-        </div>
+        <ConsolidatedReport
+          match={match}
+          setupData={setupData}
+          actions={actions as unknown as ScoringAction[]}
+          onClose={
+            isFinalReport ? handleCloseReportAndFinish : handleCloseReport
+          }
+        />
       )}
 
       {showEditActions && (
@@ -1266,7 +1358,11 @@ export function LiveScoringV4({
           allAttackers={
             currentDefendingTeam === "A" ? teamBPlaying : teamAPlaying
           }
-          onSave={() => setShowEditActions(false)}
+          onSave={(edited, remarks) => {
+            console.log("Saving edited actions:", edited, "Remarks:", remarks);
+            setShowEditActions(false);
+            toast.info("Edit saving not implemented yet.");
+          }}
           onClose={() => setShowEditActions(false)}
         />
       )}
@@ -1323,13 +1419,23 @@ export function LiveScoringV4({
                   )}
                 </div>
                 <div>
-                  <p className="font-bold text-sm">
+                  <p
+                    className={cn(
+                      "font-bold",
+                      !batchesConfirmed ? "text-yellow-800" : "text-orange-800"
+                    )}
+                  >
                     {!batchesConfirmed ? "Batches Not Set" : "Timer Paused"}
                   </p>
-                  <p className="text-sm opacity-90">
+                  <p
+                    className={cn(
+                      "text-sm",
+                      !batchesConfirmed ? "text-yellow-700" : "text-orange-700"
+                    )}
+                  >
                     {!batchesConfirmed
-                      ? "Click 'Set Batches' to continue."
-                      : "Press 'Start' to resume scoring."}
+                      ? 'Click "Set Batches" to assign defender batches.'
+                      : 'Scoring is disabled. Press "Start" to resume.'}
                   </p>
                 </div>
               </div>
@@ -1338,14 +1444,14 @@ export function LiveScoringV4({
 
           {substituteMode && attackerToSwap && (
             <div className="bg-yellow-50 border border-yellow-300 rounded-lg p-4">
-              <p className="text-yellow-900 text-sm">
-                🔄 Select substitute for <strong>{attackerToSwap.name}</strong>
+              <p className="text-yellow-900">
+                🔄 Substitution Mode: Select a substitute player to replace{" "}
+                <strong>{attackerToSwap.name}</strong>
               </p>
             </div>
           )}
 
           <div className="grid lg:grid-cols-3 gap-4">
-            {/* Defenders Card */}
             <Card className="border border-gray-300 shadow-sm">
               <CardHeader className="border-b bg-blue-50 py-2 flex flex-wrap items-center justify-between">
                 <div className="flex gap-2 items-center">
@@ -1358,24 +1464,42 @@ export function LiveScoringV4({
                       : match.teamB.name}
                   </p>
                 </div>
+
                 <div className="flex gap-1">
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={handleOpenDefenderSub}
-                    disabled={isTimerRunning || isOnBreak}
-                    className="text-xs h-7 px-2"
+                    disabled={
+                      isTimerRunning ||
+                      isOnBreak ||
+                      (currentDefendingTeam === "A"
+                        ? teamADefenderSubUsed[currentInning]
+                        : teamBDefenderSubUsed[currentInning])
+                    }
+                    className="text-xs h-7 px-2 border-orange-300 text-orange-700 hover:bg-orange-100 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    <RefreshCw className="w-3 h-3 mr-1" /> Sub
+                    <RefreshCw className="w-3 h-3 mr-1" />
+                    Sub
                   </Button>
+
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() => setShowBatchModal(true)}
                     disabled={isTimerRunning || isOnBreak}
-                    className="text-xs h-7 px-2"
+                    className={cn(
+                      "text-xs h-7 px-2",
+                      batchesConfirmed
+                        ? "border-green-300 text-green-700 bg-green-50 hover:bg-green-100"
+                        : "border-blue-300 text-blue-700 hover:bg-blue-100"
+                    )}
                   >
-                    <Users className="w-3 h-3 mr-1" />
+                    {batchesConfirmed ? (
+                      <Check className="w-3 h-3 mr-1" />
+                    ) : (
+                      <Users className="w-3 h-3 mr-1" />
+                    )}
                     {batchesConfirmed ? "View Batches" : "Set Batches"}
                   </Button>
                 </div>
@@ -1384,115 +1508,205 @@ export function LiveScoringV4({
                 {!batchesConfirmed &&
                 ((currentDefendingTeam === "A" && savedBatchesA) ||
                   (currentDefendingTeam === "B" && savedBatchesB)) ? (
-                  <Button
-                    onClick={handleUsePreviousBatches}
-                    className="w-full bg-blue-100 text-blue-700 hover:bg-blue-200 mb-3 h-8 text-xs"
-                  >
-                    <History className="w-3 h-3 mr-2" /> Use Previous Batches
-                  </Button>
+                  <div className="mb-3 p-2 bg-blue-50 border border-blue-200 rounded-lg flex flex-col gap-2">
+                    <p className="text-xs text-blue-800 text-center">
+                      Previous batch configuration available.
+                    </p>
+                    <Button
+                      onClick={handleUsePreviousBatches}
+                      disabled={isOnBreak}
+                      className="w-full bg-blue-600 hover:bg-blue-700 h-8 text-xs"
+                    >
+                      <History className="w-3 h-3 mr-2" />
+                      Use Previous Batches
+                    </Button>
+                  </div>
                 ) : null}
 
                 {showDefenderSubModal ? (
-                  <div className="grid grid-cols-3 gap-2">
-                    {(!defenderToSwapOut
-                      ? allPlayingDefenders
-                      : defenderSubstitutes
-                    ).map((p) => (
-                      <button
-                        key={p.id}
-                        onClick={() =>
-                          !defenderToSwapOut
-                            ? handleSelectDefenderToSwap(p)
-                            : handleSelectDefenderSubstitute(p)
-                        }
-                        className="p-2 border rounded text-center hover:bg-gray-50"
-                      >
-                        <div className="w-8 h-8 bg-gray-500 text-white rounded-full mx-auto flex items-center justify-center mb-1">
-                          {p.jerseyNumber}
+                  <div className="space-y-3">
+                    {!defenderToSwapOut ? (
+                      <>
+                        <p className="text-sm font-medium text-center">
+                          Select Defender to Substitute Out:
+                        </p>
+                        <div className="grid grid-cols-3 gap-2">
+                          {allPlayingDefenders.map((player) => (
+                            <button
+                              key={player.id}
+                              onClick={() => handleSelectDefenderToSwap(player)}
+                              className="p-2 rounded-lg border-2 border-gray-300 hover:border-orange-400 hover:bg-orange-50 transition-all"
+                            >
+                              <div className="text-center">
+                                <div className="w-9 h-9 bg-gradient-to-br from-gray-500 to-gray-700 rounded-full flex items-center justify-center text-white mx-auto mb-1">
+                                  {player.jerseyNumber}
+                                </div>
+                                <p className="text-[10px] text-gray-900 truncate">
+                                  {player.name}
+                                </p>
+                              </div>
+                            </button>
+                          ))}
                         </div>
-                        <p className="text-[10px] truncate">{p.name}</p>
-                      </button>
-                    ))}
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-sm font-medium text-center">
+                          Select Substitute to Bring In (for{" "}
+                          {defenderToSwapOut.name}):
+                        </p>
+                        <div className="grid grid-cols-3 gap-2">
+                          {defenderSubstitutes.length > 0 ? (
+                            defenderSubstitutes.map((player) => (
+                              <button
+                                key={player.id}
+                                onClick={() =>
+                                  handleSelectDefenderSubstitute(player)
+                                }
+                                className="p-2 rounded-lg border-2 border-green-400 hover:border-green-600 hover:bg-green-50 transition-all"
+                              >
+                                <div className="text-center">
+                                  <div className="w-9 h-9 bg-gradient-to-br from-green-600 to-emerald-600 rounded-full flex items-center justify-center text-white mx-auto mb-1">
+                                    {player.jerseyNumber}
+                                  </div>
+                                  <p className="text-[10px] text-gray-900 truncate">
+                                    {player.name}
+                                  </p>
+                                </div>
+                              </button>
+                            ))
+                          ) : (
+                            <p className="col-span-3 text-center text-gray-500">
+                              No substitutes available.
+                            </p>
+                          )}
+                        </div>
+                      </>
+                    )}
                     <Button
                       variant="outline"
                       size="sm"
                       onClick={handleCancelDefenderSub}
-                      className="col-span-3"
+                      className="w-full"
                     >
-                      Cancel
+                      Cancel Substitution
                     </Button>
                   </div>
-                ) : !batchesConfirmed ? (
-                  <div className="text-center py-8 text-gray-400 text-xs">
-                    Set batches to see players
-                  </div>
                 ) : (
-                  <div className="space-y-3">
-                    {defenderBatches.map((batch, idx) => (
-                      <div
-                        key={idx}
-                        className={cn(
-                          "border-t pt-2",
-                          idx === 0 && "border-t-0 pt-0"
-                        )}
-                      >
-                        <Badge
-                          variant={
-                            idx === activeBatchIndex ? "default" : "secondary"
-                          }
-                          className="mb-2 text-[10px]"
-                        >
-                          Batch {idx + 1}
-                        </Badge>
-                        <div className="grid grid-cols-3 gap-2">
-                          {batch.map((p) => {
-                            const isOut = defendersOutIdsInActiveBatch.has(
-                              p.id
-                            );
-                            return (
-                              <button
-                                key={p.id}
-                                onClick={() =>
-                                  !isOut &&
-                                  idx === activeBatchIndex &&
-                                  handleDefenderSelect(p)
-                                }
-                                disabled={isOut || idx !== activeBatchIndex}
-                                className={cn(
-                                  "p-2 border rounded text-center relative",
-                                  selectedDefender?.id === p.id
-                                    ? "border-blue-600 bg-blue-50"
-                                    : "hover:bg-gray-50",
-                                  isOut && "opacity-50 bg-gray-100"
-                                )}
-                              >
-                                <div className="w-8 h-8 bg-blue-600 text-white rounded-full mx-auto flex items-center justify-center mb-1">
-                                  {p.jerseyNumber}
-                                </div>
-                                <p className="text-[10px] truncate">{p.name}</p>
-                                {isOut && (
-                                  <span className="absolute top-1 right-1 text-[8px] text-red-600 font-bold">
-                                    OUT
-                                  </span>
-                                )}
-                              </button>
-                            );
-                          })}
-                        </div>
+                  <>
+                    {!batchesConfirmed ? (
+                      <div className="text-center py-10 text-gray-500 text-sm">
+                        Please set defender batches first.
                       </div>
-                    ))}
-                  </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {defenderBatches.map((batch, batchIndex) => (
+                          <div
+                            key={`batch-${batchIndex}`}
+                            className={cn(
+                              "border-t pt-2",
+                              batchIndex === 0 && "border-t-0 pt-0"
+                            )}
+                          >
+                            <Badge
+                              variant={
+                                batchIndex === activeBatchIndex
+                                  ? "default"
+                                  : "secondary"
+                              }
+                              className={cn(
+                                "mb-2",
+                                batchIndex === activeBatchIndex
+                                  ? "bg-blue-600 animate-pulse"
+                                  : "bg-gray-400 opacity-70"
+                              )}
+                            >
+                              Batch {batchIndex + 1}{" "}
+                              {batchIndex === activeBatchIndex
+                                ? "(Active)"
+                                : ""}
+                            </Badge>
+                            <div className="grid grid-cols-3 gap-2">
+                              {batch.map((player) => {
+                                const isOut = defendersOutIdsInActiveBatch.has(
+                                  player.id
+                                );
+                                const isActiveBatch =
+                                  batchIndex === activeBatchIndex;
+                                const isDisabled =
+                                  !isTimerRunning ||
+                                  substituteMode ||
+                                  !isActiveBatch ||
+                                  isOut ||
+                                  showDefenderSubModal;
+
+                                return (
+                                  <button
+                                    key={player.id}
+                                    onClick={() =>
+                                      !isDisabled &&
+                                      handleDefenderSelect(player)
+                                    }
+                                    disabled={isDisabled}
+                                    className={cn(
+                                      `p-2 rounded-lg border-2 transition-all duration-200`,
+                                      isOut
+                                        ? "border-gray-200 bg-gray-100 opacity-50 cursor-not-allowed"
+                                        : selectedDefender?.id === player.id
+                                        ? "border-blue-600 bg-blue-100 shadow-md scale-105"
+                                        : !isActiveBatch
+                                        ? "border-gray-300 bg-gray-50 opacity-40 cursor-not-allowed"
+                                        : isDisabled
+                                        ? "border-gray-300 opacity-50 cursor-not-allowed"
+                                        : "border-gray-300 hover:border-blue-400 hover:bg-gray-50 hover:scale-105"
+                                    )}
+                                  >
+                                    <div className="text-center">
+                                      <div
+                                        className={cn(
+                                          `w-9 h-9 rounded-full flex items-center justify-center mx-auto mb-1 text-white`,
+                                          isOut || !isActiveBatch
+                                            ? "bg-gray-400"
+                                            : "bg-gradient-to-br from-blue-600 to-indigo-600"
+                                        )}
+                                      >
+                                        {player.jerseyNumber}
+                                      </div>
+                                      <p
+                                        className={cn(
+                                          `text-[10px] truncate leading-tight`,
+                                          isOut || !isActiveBatch
+                                            ? "text-gray-400"
+                                            : "text-gray-900"
+                                        )}
+                                      >
+                                        {player.name}
+                                      </p>
+                                      {isOut && (
+                                        <p className="text-[8px] text-red-500 mt-0.5">
+                                          OUT
+                                        </p>
+                                      )}
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
                 )}
               </CardContent>
             </Card>
 
-            {/* Attackers Card */}
             <Card className="border border-gray-300 shadow-sm">
               <CardHeader className="border-b bg-red-50 py-2">
                 <CardTitle className="text-sm text-red-900">
                   Attackers
                 </CardTitle>
-                <p className="text-xs text-red-700">
+                <p className="text-xs text-red-700 mt-0.5">
                   {currentDefendingTeam === "A"
                     ? match.teamB.name
                     : match.teamA.name}
@@ -1501,52 +1715,76 @@ export function LiveScoringV4({
               <CardContent className="p-3">
                 {!substituteMode ? (
                   <>
-                    <div className="grid grid-cols-3 gap-2 mb-3">
-                      {attackers.map((p) => (
+                    <div className="grid grid-cols-3 gap-2 mb-2">
+                      {attackers.map((player) => (
                         <button
-                          key={p.id}
-                          onClick={() => handleAttackerSelect(p)}
+                          key={player.id}
+                          onClick={() => handleAttackerSelect(player)}
+                          disabled={!isTimerRunning || isOnBreak}
                           className={cn(
-                            "p-2 border rounded text-center hover:bg-red-50",
-                            selectedAttacker?.id === p.id &&
-                              "border-red-600 bg-red-50"
+                            `p-2 rounded-lg border-2 transition-all duration-200 hover:scale-105`,
+                            selectedAttacker?.id === player.id
+                              ? "border-red-600 bg-red-100 shadow-md"
+                              : !isTimerRunning || isOnBreak
+                              ? "border-gray-300 opacity-50 cursor-not-allowed"
+                              : "border-gray-300 hover:border-red-400 hover:bg-gray-50"
                           )}
                         >
-                          <div className="w-8 h-8 bg-red-600 text-white rounded-full mx-auto flex items-center justify-center mb-1">
-                            {p.jerseyNumber}
+                          <div className="text-center">
+                            <div className="w-9 h-9 bg-gradient-to-br from-red-600 to-pink-600 rounded-full flex items-center justify-center text-white mx-auto mb-1">
+                              {player.jerseyNumber}
+                            </div>
+                            <p className="text-[10px] text-gray-900 truncate leading-tight">
+                              {player.name}
+                            </p>
                           </div>
-                          <p className="text-[10px] truncate">{p.name}</p>
                         </button>
                       ))}
                     </div>
                     <Button
+                      onClick={handleSubstituteClick}
+                      disabled={
+                        !selectedAttacker || !isTimerRunning || isOnBreak
+                      }
                       variant="outline"
                       size="sm"
-                      onClick={handleSubstituteClick}
-                      className="w-full text-xs"
+                      className="w-full border-2 border-red-600 text-red-600 hover:bg-red-50 transition-all"
                     >
-                      <RefreshCw className="w-3 h-3 mr-2" /> Substitute
+                      <RefreshCw className="w-3 h-3 mr-1" />
+                      Substitute
                     </Button>
                   </>
                 ) : (
-                  <div className="grid grid-cols-3 gap-2">
-                    {attackerSubstitutes.map((p) => (
-                      <button
-                        key={p.id}
-                        onClick={() => handleSubstituteSelect(p)}
-                        className="p-2 border border-green-200 rounded text-center hover:bg-green-50"
-                      >
-                        <div className="w-8 h-8 bg-green-600 text-white rounded-full mx-auto flex items-center justify-center mb-1">
-                          {p.jerseyNumber}
-                        </div>
-                        <p className="text-[10px] truncate">{p.name}</p>
-                      </button>
-                    ))}
+                  <div className="space-y-2">
+                    <p className="text-xs text-gray-600 mb-2">
+                      Select substitute:
+                    </p>
+                    <div className="grid grid-cols-3 gap-2">
+                      {attackerSubstitutes.map((player) => (
+                        <button
+                          key={player.id}
+                          onClick={() => handleSubstituteSelect(player)}
+                          className="p-2 rounded-lg border-2 border-green-400 hover:border-green-600 hover:bg-green-50 transition-all duration-200 hover:scale-105"
+                        >
+                          <div className="text-center">
+                            <div className="w-9 h-9 bg-gradient-to-br from-green-600 to-emerald-600 rounded-full flex items-center justify-center text-white mx-auto mb-1">
+                              {player.jerseyNumber}
+                            </div>
+                            <p className="text-[10px] text-gray-900 truncate leading-tight">
+                              {player.name}
+                            </p>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
                     <Button
+                      onClick={() => {
+                        setSubstituteMode(false);
+                        setAttackerToSwap(null);
+                      }}
                       variant="outline"
                       size="sm"
-                      onClick={() => setSubstituteMode(false)}
-                      className="col-span-3"
+                      className="w-full"
                     >
                       Cancel
                     </Button>
@@ -1555,37 +1793,73 @@ export function LiveScoringV4({
               </CardContent>
             </Card>
 
-            {/* Symbols Card */}
             <Card className="border border-gray-300 shadow-sm">
               <CardHeader className="border-b bg-gray-50 py-2">
                 <CardTitle className="text-sm text-gray-900">Symbols</CardTitle>
+                <p className="text-xs text-gray-600 mt-0.5">Type of out</p>
               </CardHeader>
               <CardContent className="p-3">
-                <div className="grid grid-cols-3 gap-2 mb-3">
-                  {SYMBOLS.map((s) => (
-                    <button
-                      key={s.type}
-                      onClick={() => handleSymbolSelect(s.type)}
-                      className={cn(
-                        "p-2 border rounded text-center hover:bg-gray-50 flex flex-col items-center justify-center h-16",
-                        selectedSymbol === s.type &&
-                          "border-indigo-600 bg-indigo-50"
-                      )}
-                    >
-                      <span className="text-xs font-bold block">{s.name}</span>
-                      <span className="text-[10px] text-gray-500">
-                        ({s.abbr})
-                      </span>
-                    </button>
-                  ))}
+                <div className="grid grid-cols-3 gap-2 mb-2">
+                  {SYMBOLS.map((symbol) => {
+                    const isSingle = symbol.singlePlayer;
+                    const isDisabled =
+                      !isTimerRunning ||
+                      isOnBreak ||
+                      substituteMode ||
+                      (!isSingle && (!selectedDefender || !selectedAttacker)) ||
+                      (isSingle && !selectedDefender && !selectedAttacker);
+
+                    return (
+                      <button
+                        key={symbol.type}
+                        onClick={() =>
+                          handleSymbolSelect(symbol.type as SymbolType)
+                        }
+                        disabled={isDisabled}
+                        className={cn(
+                          `p-2 rounded-lg border-2 transition-all duration-200 hover:scale-105 min-h-[60px] flex flex-col justify-center`,
+                          selectedSymbol === symbol.type
+                            ? "border-indigo-600 bg-indigo-100 shadow-md"
+                            : "border-gray-300 hover:border-indigo-400 hover:bg-gray-50",
+                          isDisabled ? "opacity-50 cursor-not-allowed" : ""
+                        )}
+                      >
+                        <div className="text-center">
+                          <p className="text-xs leading-tight font-medium text-gray-900">
+                            {symbol.name}
+                          </p>
+                          <p className="text-[10px] text-gray-500 mt-0.5">
+                            ({symbol.abbr}){symbol.singlePlayer ? " *" : ""}
+                          </p>
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
                 <Button
                   onClick={handleOut}
-                  disabled={!selectedSymbol || isConfirming}
-                  className="w-full bg-green-600 hover:bg-green-700"
+                  disabled={
+                    isConfirming ||
+                    !isTimerRunning ||
+                    isOnBreak ||
+                    !selectedSymbol ||
+                    (!SYMBOLS.find((s) => s.type === selectedSymbol)
+                      ?.singlePlayer &&
+                      (!selectedDefender || !selectedAttacker)) ||
+                    (SYMBOLS.find((s) => s.type === selectedSymbol)
+                      ?.singlePlayer &&
+                      !selectedDefender &&
+                      !selectedAttacker)
+                  }
+                  className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 h-12 shadow-lg transition-all"
                 >
-                  Confirm Action
+                  {isConfirming ? "Confirming..." : "Confirm Action"}
                 </Button>
+                {SYMBOLS.some((s) => s.singlePlayer) && (
+                  <p className="text-[10px] text-gray-500 text-center mt-1">
+                    * Single player symbols (select D or A)
+                  </p>
+                )}
               </CardContent>
             </Card>
           </div>

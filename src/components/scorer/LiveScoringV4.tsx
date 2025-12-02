@@ -16,13 +16,13 @@ import { RefreshCw, Ban, Users, Check, RotateCcw, History } from "lucide-react";
 import { Match, Player, ScoringAction, SymbolType } from "../../types";
 import { MatchSetupData } from "./MatchSetupEnhanced";
 import { toast } from "sonner";
-import { ConsolidatedReport } from "./ConsolidatedReport";
 import { EditActionsPage } from "./EditActionsPage";
 import { supabase } from "../../supabaseClient";
 import { Scoreboard } from "./Scoreboard";
 import { Scoresheet } from "./Scoresheet";
 import { BatchSelectionModal } from "./BatchSelectionModal";
 import { cn } from "../ui/utils";
+import { useNavigate } from "react-router-dom";
 
 const TURN_BREAK_DURATION = 180;
 const INNING_BREAK_DURATION = 300;
@@ -149,6 +149,8 @@ export function LiveScoringV4({
   onBack,
   onEndMatch,
 }: LiveScoringV4Props) {
+  const navigate = useNavigate();
+
   // --- Persistent Game State ---
   const [currentInning, setCurrentInning] = useStickyState(
     1,
@@ -258,8 +260,6 @@ export function LiveScoringV4({
   const [attackerToSwap, setAttackerToSwap] = useState<Player | null>(null);
   const [actions, setActions] = useState<DbScoringAction[]>([]);
 
-  const [showConsolidatedReport, setShowConsolidatedReport] = useState(false);
-  const [isFinalReport, setIsFinalReport] = useState(false);
   const [showEditActions, setShowEditActions] = useState(false);
   const [showEndMatchConfirm, setShowEndMatchConfirm] = useState(false);
   const [showCardConfirm, setShowCardConfirm] = useState(false);
@@ -1174,26 +1174,13 @@ export function LiveScoringV4({
     setIsTimerRunning(false);
     setShowEndMatchConfirm(false);
 
-    // 3. Show the Report Modal (Do NOT navigate away yet)
-    setIsFinalReport(true);
-    setShowConsolidatedReport(true);
-  };
-
-  const handleCloseReport = () => {
-    setShowConsolidatedReport(false);
-
-    // 4. Navigate ONLY after closing the final report
-    if (isFinalReport) {
-      onEndMatch(actions as unknown as ScoringAction[]);
-    }
-
-    setIsFinalReport(false);
+    // 3. Navigate to the Turn-by-Turn Result View
+    // Passing state to indicate we should redirect to home upon "Close"
+    navigate(`/scorer/results/match/${match.id}`, { state: { returnToHome: true } });
   };
 
   const handleCloseReportAndFinish = () => {
-    setShowConsolidatedReport(false);
-    setIsFinalReport(false);
-    // Navigation is handled by onEndMatch being called in confirmEndMatch
+    // This is handled via navigation now
   };
 
   // --- Batch Modal Handlers ---
@@ -1337,17 +1324,6 @@ export function LiveScoringV4({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      {showConsolidatedReport && (
-        <ConsolidatedReport
-          match={match}
-          setupData={setupData}
-          actions={actions as unknown as ScoringAction[]}
-          onClose={
-            isFinalReport ? handleCloseReportAndFinish : handleCloseReport
-          }
-        />
-      )}
 
       {showEditActions && (
         <EditActionsPage
@@ -1870,8 +1846,7 @@ export function LiveScoringV4({
             defenderScoresheet={defenderScoresheet}
             attackerScoresheet={attackerScoresheet}
             onViewConsolidatedReport={() => {
-              setIsFinalReport(false);
-              setShowConsolidatedReport(true);
+              // This can also navigate if needed, but for now just let it be or remove if unused in finished state
             }}
           />
         </div>

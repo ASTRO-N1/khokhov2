@@ -496,7 +496,7 @@ function ViewerLiveMatchWrapper() {
     fetchMatch();
 
     const subscription = supabase
-      .channel(`match-viewer-${match.id}`)
+      .channel(`match-viewer-${matchId}`)
       .on(
         "postgres_changes",
         {

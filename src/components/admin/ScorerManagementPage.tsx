@@ -20,8 +20,8 @@ import {
   Phone,
   User,
   Lock,
-  Trash2, // Added Trash2 icon
-  AlertCircle, // Added AlertCircle icon
+  Trash2,
+  AlertCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -51,6 +51,8 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { supabase } from "../../supabaseClient";
+import { useSubscriptionLimits } from "../../hooks/useSubscriptionLimits"; // 1. Import Hook
+import { LimitReachedModal } from "../common/LimitReachedModal"; // 2. Import Modal
 
 interface ScorerProfile {
   id: string;
@@ -69,10 +71,10 @@ interface Assignment {
 
 export function ScorerManagementPage() {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false); // State for delete confirmation dialog
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [scorerToDelete, setScorerToDelete] = useState<ScorerProfile | null>(
     null
-  ); // State to hold scorer data for deletion
+  );
 
   const [newScorer, setNewScorer] = useState({
     name: "",
@@ -94,16 +96,31 @@ export function ScorerManagementPage() {
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // 3. Init Hooks
+  const { checkLimit, planName, refreshLimits } = useSubscriptionLimits();
+  const [showLimitModal, setShowLimitModal] = useState(false);
+
   useEffect(() => {
     fetchInitialData();
   }, []);
 
   async function fetchInitialData() {
     setLoading(true);
-    const tournamentsPromise = supabase.from("tournaments").select("id, name");
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    // 1. Fetch My Tournaments
+    const tournamentsPromise = supabase
+      .from("tournaments")
+      .select("id, name")
+      .eq("user_id", user?.id);
+
+    // 2. Fetch My Matches (for the dropdown)
     const matchesPromise = supabase
       .from("matches")
-      .select("id, match_number, tournament_id");
+      .select("id, match_number, tournament_id")
+      .eq("user_id", user?.id);
 
     const [tournamentsResult, matchesResult] = await Promise.all([
       tournamentsPromise,
@@ -113,20 +130,27 @@ export function ScorerManagementPage() {
     if (tournamentsResult.data) setTournaments(tournamentsResult.data);
     if (matchesResult.data) setMatches(matchesResult.data);
 
-    await fetchScorersAndAssignments();
+    await fetchScorersAndAssignments(user?.id);
     setLoading(false);
   }
 
-  async function fetchScorersAndAssignments() {
+  async function fetchScorersAndAssignments(userId: string | undefined) {
+    if (!userId) return;
+
+    // 3. Fetch My Scorers (created_by me)
     const scorersPromise = supabase
       .from("profiles")
       .select("id, name, email, contact_number")
-      .eq("role", "scorer");
+      .eq("role", "scorer")
+      .eq("created_by", userId);
+
+    // 4. Fetch Assignments (Matches I own that have scorers)
     const assignmentsPromise = supabase
       .from("matches")
       .select(
         `id, match_number, match_datetime, tournaments ( name ), scorer:profiles ( name )`
       )
+      .eq("user_id", userId)
       .not("scorer_id", "is", null);
 
     const [scorersResult, assignmentsResult] = await Promise.all([
@@ -147,17 +171,35 @@ export function ScorerManagementPage() {
     } else if (assignmentsResult.data) {
       const formattedAssignments = assignmentsResult.data.map((a: any) => ({
         id: a.id,
-        tournamentName: a.tournaments.name,
+        tournamentName: a.tournaments?.name || "Unknown",
         matchNumber: a.match_number || "N/A",
-        scorerName: a.scorer.name,
+        scorerName: a.scorer?.name || "Unknown",
         dateTime: new Date(a.match_datetime).toLocaleString(),
       }));
       setAssignments(formattedAssignments);
     }
   }
 
+  // Wrapper to handle the "Add New Scorer" click
+  const handleOpenCreateDialog = () => {
+    // 4. CHECK LIMIT BEFORE OPENING DIALOG
+    if (!checkLimit("scorers")) {
+      setShowLimitModal(true);
+      return;
+    }
+    setShowCreateDialog(true);
+  };
+
   const handleCreateScorer = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+
+    // Double check limit just in case
+    if (!checkLimit("scorers")) {
+      setShowCreateDialog(false);
+      setShowLimitModal(true);
+      return;
+    }
+
     if (
       !newScorer.name ||
       !newScorer.email ||
@@ -185,7 +227,6 @@ export function ScorerManagementPage() {
       return;
     }
 
-    // Check for application-level errors from the Edge Function
     if (edgeFunctionData.error) {
       const message = String(edgeFunctionData.error).includes(
         "User already registered"
@@ -196,11 +237,15 @@ export function ScorerManagementPage() {
       return;
     }
 
-    // Success
     toast.success("Scorer created successfully! They are now active.");
-    fetchScorersAndAssignments();
 
-    // Reset form and dialog state
+    // Refresh list and limits
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    fetchScorersAndAssignments(user?.id);
+    refreshLimits(); // Update limits count
+
     setNewScorer({ name: "", email: "", contact: "", password: "" });
     setShowCreateDialog(false);
   };
@@ -208,7 +253,6 @@ export function ScorerManagementPage() {
   const handleDeleteScorer = async () => {
     if (!scorerToDelete) return;
 
-    // Call the 'delete-user' Edge Function
     const { data: edgeFunctionData, error: edgeFunctionError } =
       await supabase.functions.invoke("delete-user", {
         body: {
@@ -230,10 +274,14 @@ export function ScorerManagementPage() {
 
     toast.success(`Scorer ${scorerToDelete.name} deleted successfully.`);
 
-    // Reset state and refresh the list
     setScorerToDelete(null);
     setShowDeleteConfirm(false);
-    fetchScorersAndAssignments(); // Refresh list to reflect changes
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    fetchScorersAndAssignments(user?.id);
+    refreshLimits(); // Refresh limits count (one spot freed up!)
   };
 
   const handleAssignScorer = async () => {
@@ -251,7 +299,10 @@ export function ScorerManagementPage() {
       toast.error(`Failed to assign scorer: ${error.message}`);
     } else {
       toast.success("Scorer assigned successfully!");
-      fetchScorersAndAssignments();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      fetchScorersAndAssignments(user?.id);
     }
 
     setSelectedTournament("");
@@ -268,7 +319,10 @@ export function ScorerManagementPage() {
       toast.error(`Failed to remove assignment: ${error.message}`);
     } else {
       toast.success("Assignment removed.");
-      fetchScorersAndAssignments();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      fetchScorersAndAssignments(user?.id);
     }
   };
 
@@ -314,11 +368,17 @@ export function ScorerManagementPage() {
                     <SelectValue placeholder="Select tournament" />
                   </SelectTrigger>
                   <SelectContent>
-                    {tournaments.map((t) => (
-                      <SelectItem key={t.id} value={t.id}>
-                        {t.name}
-                      </SelectItem>
-                    ))}
+                    {tournaments.length === 0 ? (
+                      <div className="p-2 text-sm text-gray-500">
+                        No tournaments available
+                      </div>
+                    ) : (
+                      tournaments.map((t) => (
+                        <SelectItem key={t.id} value={t.id}>
+                          {t.name}
+                        </SelectItem>
+                      ))
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -352,7 +412,7 @@ export function ScorerManagementPage() {
                     Scorer *
                   </Label>
                   <Button
-                    onClick={() => setShowCreateDialog(true)}
+                    onClick={handleOpenCreateDialog} // Updated Handler
                     size="sm"
                     variant="outline"
                     className="h-8 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-400 transition-all"
@@ -372,11 +432,17 @@ export function ScorerManagementPage() {
                     <SelectValue placeholder="Select scorer" />
                   </SelectTrigger>
                   <SelectContent>
-                    {scorers.map((s) => (
-                      <SelectItem key={s.id} value={s.id}>
-                        {s.name}
-                      </SelectItem>
-                    ))}
+                    {scorers.length === 0 ? (
+                      <div className="p-2 text-sm text-gray-500">
+                        No scorers found. Add one above!
+                      </div>
+                    ) : (
+                      scorers.map((s) => (
+                        <SelectItem key={s.id} value={s.id}>
+                          {s.name}
+                        </SelectItem>
+                      ))
+                    )}
                   </SelectContent>
                 </Select>
               </div>
@@ -425,7 +491,6 @@ export function ScorerManagementPage() {
                       </div>
                     </div>
                   </div>
-                  {/* DELETE BUTTON: Removed opacity-0/group-hover for constant visibility */}
                   <Button
                     variant="ghost"
                     size="sm"
@@ -439,6 +504,11 @@ export function ScorerManagementPage() {
                   </Button>
                 </div>
               ))}
+              {scorers.length === 0 && (
+                <div className="col-span-full text-center py-8 text-gray-500 bg-gray-50 rounded-lg border border-dashed border-gray-300">
+                  No scorers created yet.
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -625,40 +695,51 @@ export function ScorerManagementPage() {
             </form>
           </DialogContent>
         </Dialog>
-      </div>
 
-      {/* AlertDialog for Delete Confirmation */}
-      <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2">
-              <AlertCircle className="w-5 h-5 text-red-600" />
-              Confirm Deletion
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you absolutely sure you want to delete the scorer "
-              <span className="font-semibold text-gray-800">
-                {scorerToDelete?.name}
-              </span>
-              "?
-              <br />
-              This action will permanently delete the user account and **remove
-              all their match assignments.**
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setScorerToDelete(null)}>
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDeleteScorer}
-              className="bg-red-600 hover:bg-red-700"
-            >
-              Yes, Delete Scorer
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        {/* AlertDialog for Delete Confirmation */}
+        <AlertDialog
+          open={showDeleteConfirm}
+          onOpenChange={setShowDeleteConfirm}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center gap-2">
+                <AlertCircle className="w-5 h-5 text-red-600" />
+                Confirm Deletion
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                Are you absolutely sure you want to delete the scorer "
+                <span className="font-semibold text-gray-800">
+                  {scorerToDelete?.name}
+                </span>
+                "?
+                <br />
+                This action will permanently delete the user account and
+                **remove all their match assignments.**
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel onClick={() => setScorerToDelete(null)}>
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleDeleteScorer}
+                className="bg-red-600 hover:bg-red-700"
+              >
+                Yes, Delete Scorer
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* 5. ADD MODAL */}
+        <LimitReachedModal
+          isOpen={showLimitModal}
+          onClose={() => setShowLimitModal(false)}
+          resource="Scorers"
+          currentPlan={planName}
+        />
+      </div>
     </>
   );
 }

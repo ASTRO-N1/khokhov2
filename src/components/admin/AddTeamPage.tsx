@@ -9,7 +9,7 @@ import { Badge } from "../ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui/tabs";
 import { supabase } from "../../supabaseClient";
 import Papa from "papaparse";
-import * as XLSX from "xlsx"; // Import the new library
+import * as XLSX from "xlsx";
 import {
   Select,
   SelectContent,
@@ -40,9 +40,17 @@ export function AddTeamPage() {
 
   useEffect(() => {
     const fetchTournaments = async () => {
+      // 1. Get Current User
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      // 2. Fetch MY Tournaments only
       const { data, error } = await supabase
         .from("tournaments")
-        .select("id, name");
+        .select("id, name")
+        .eq("user_id", user?.id); // <--- FILTER ADDED
+
       if (error) {
         toast.error("Failed to fetch tournaments.");
       } else {
@@ -111,9 +119,8 @@ export function AddTeamPage() {
     data.forEach((row: any) => {
       if (players.length + addedCount >= 15) {
         skippedCount++;
-        return; // Stop processing rows if limit is reached
+        return;
       }
-      // Look for common header names
       const name = row["Player Name"] || row["name"] || row["Name"];
       const jerseyStr =
         row["Jersey Number"] || row["jerseyNumber"] || row["Jersey"];
@@ -181,7 +188,7 @@ export function AddTeamPage() {
       toast.error("Unsupported file type. Please upload a CSV or Excel file.");
     }
 
-    e.target.value = ""; // Reset file input
+    e.target.value = "";
   };
 
   const handleReset = () => {
@@ -238,7 +245,9 @@ export function AddTeamPage() {
     }
 
     if (existingTeams && existingTeams.length > 0) {
-      toast.error("A team with this name already exists in the selected tournament.");
+      toast.error(
+        "A team with this name already exists in the selected tournament."
+      );
       setLoading(false);
       return;
     }
@@ -249,7 +258,7 @@ export function AddTeamPage() {
         name: teamName,
         captain_name: captainName,
         coach_name: coach,
-        user_id: user.id,
+        user_id: user.id, // Ensure user ownership is set
         tournament_id: selectedTournamentId,
       })
       .select("id")
@@ -265,7 +274,7 @@ export function AddTeamPage() {
       name: player.name,
       jersey_number: player.jerseyNumber,
       team_id: teamData.id,
-      user_id: user.id,
+      user_id: user.id, // Ensure user ownership is set for players too
     }));
 
     const { data: insertedPlayers, error: playerError } = await supabase
@@ -326,11 +335,17 @@ export function AddTeamPage() {
                   <SelectValue placeholder="Select tournament" />
                 </SelectTrigger>
                 <SelectContent>
-                  {tournaments.map((t) => (
-                    <SelectItem key={t.id} value={t.id}>
-                      {t.name}
+                  {tournaments.length === 0 ? (
+                    <SelectItem value="none" disabled>
+                      No tournaments available
                     </SelectItem>
-                  ))}
+                  ) : (
+                    tournaments.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>
+                        {t.name}
+                      </SelectItem>
+                    ))
+                  )}
                 </SelectContent>
               </Select>
             </div>

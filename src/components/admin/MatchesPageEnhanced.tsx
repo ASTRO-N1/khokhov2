@@ -51,14 +51,25 @@ export function MatchesPageEnhanced() {
   useEffect(() => {
     async function fetchData() {
       setLoading(true);
+
+      // 1. Get Current User
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      // 2. Filter Tournaments (Only show mine)
       const tournamentsPromise = supabase
         .from("tournaments")
-        .select("id, name");
+        .select("id, name")
+        .eq("user_id", user?.id); // <--- FILTER
+
+      // 3. Filter Matches (Only show mine)
       const matchesPromise = supabase
         .from("matches")
         .select(
           `id, match_number, match_datetime, venue, status, score_a, score_b, tournament_id, tournaments ( id, name ), team_a:teams!matches_team_a_id_fkey ( id, name, captain_name ), team_b:teams!matches_team_b_id_fkey ( id, name, captain_name )`
         )
+        .eq("user_id", user?.id) // <--- FILTER
         .order("match_datetime", { ascending: false });
 
       const [tournamentsResult, matchesResult] = await Promise.all([
@@ -81,17 +92,17 @@ export function MatchesPageEnhanced() {
           id: m.id,
           matchNumber: m.match_number || `M-${m.id.substring(0, 4)}`,
           tournamentId: m.tournament_id,
-          tournamentName: m.tournaments.name,
+          tournamentName: m.tournaments?.name || "Unknown",
           teamA: {
-            id: m.team_a.id,
-            name: m.team_a.name,
-            captain: m.team_a.captain_name,
+            id: m.team_a?.id,
+            name: m.team_a?.name || "Unknown",
+            captain: m.team_a?.captain_name,
             players: [],
           },
           teamB: {
-            id: m.team_b.id,
-            name: m.team_b.name,
-            captain: m.team_b.captain_name,
+            id: m.team_b?.id,
+            name: m.team_b?.name || "Unknown",
+            captain: m.team_b?.captain_name,
             players: [],
           },
           dateTime: m.match_datetime,
@@ -118,12 +129,19 @@ export function MatchesPageEnhanced() {
       toast.error(`Failed to delete match: ${error.message}`);
     } else {
       toast.success(`Match ${matchToDelete.matchNumber} deleted.`);
-      // Refetch matches for the selected tournament
+
+      // Get User ID again for refetch
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      // Refetch matches with filter
       const { data, error: refetchError } = await supabase
         .from("matches")
         .select(
           `id, match_number, match_datetime, venue, status, score_a, score_b, tournament_id, tournaments ( id, name ), team_a:teams!matches_team_a_id_fkey ( id, name, captain_name ), team_b:teams!matches_team_b_id_fkey ( id, name, captain_name )`
         )
+        .eq("user_id", user?.id) // <--- FILTER
         .order("match_datetime", { ascending: false });
 
       if (refetchError) {
@@ -133,17 +151,17 @@ export function MatchesPageEnhanced() {
           id: m.id,
           matchNumber: m.match_number || `M-${m.id.substring(0, 4)}`,
           tournamentId: m.tournament_id,
-          tournamentName: m.tournaments.name,
+          tournamentName: m.tournaments?.name,
           teamA: {
-            id: m.team_a.id,
-            name: m.team_a.name,
-            captain: m.team_a.captain_name,
+            id: m.team_a?.id,
+            name: m.team_a?.name,
+            captain: m.team_a?.captain_name,
             players: [],
           },
           teamB: {
-            id: m.team_b.id,
-            name: m.team_b.name,
-            captain: m.team_b.captain_name,
+            id: m.team_b?.id,
+            name: m.team_b?.name,
+            captain: m.team_b?.captain_name,
             players: [],
           },
           dateTime: m.match_datetime,
@@ -261,7 +279,6 @@ export function MatchesPageEnhanced() {
                 Watch Live
               </Button>
             )}
-            {/* Start Button Removed Here */}
             {match.status === "finished" && (
               <Button
                 size="sm"
@@ -276,7 +293,7 @@ export function MatchesPageEnhanced() {
               onClick={() => navigate(`/admin/matches/edit/${match.id}`)}
               variant="outline"
               size="sm"
-              className={match.status === "upcoming" ? "flex-1" : ""} // Make edit button full width if it's the main action
+              className={match.status === "upcoming" ? "flex-1" : ""}
             >
               <Edit className="w-4 h-4 mr-2" />
               Edit
@@ -333,11 +350,17 @@ export function MatchesPageEnhanced() {
                 <SelectValue placeholder="Choose a tournament..." />
               </SelectTrigger>
               <SelectContent>
-                {tournaments.map((t) => (
-                  <SelectItem key={t.id} value={t.id}>
-                    {t.name}
-                  </SelectItem>
-                ))}
+                {tournaments.length === 0 ? (
+                  <div className="p-2 text-sm text-gray-500">
+                    No tournaments found. Create one first!
+                  </div>
+                ) : (
+                  tournaments.map((t) => (
+                    <SelectItem key={t.id} value={t.id}>
+                      {t.name}
+                    </SelectItem>
+                  ))
+                )}
               </SelectContent>
             </Select>
           </div>

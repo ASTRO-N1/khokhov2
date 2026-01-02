@@ -1,358 +1,203 @@
-import { useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
-import { Badge } from '../ui/badge';
-import { Button } from '../ui/button';
-import { Input } from '../ui/input';
-import { Label } from '../ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
-import { 
-  Filter, 
-  Calendar,
-  Search,
-  Download,
-  Lock,
-  RotateCcw,
-  User,
-  Trophy,
+import { useState, useEffect } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
+import { Badge } from "../ui/badge";
+import { ScrollArea } from "../ui/scroll-area";
+import {
   Activity,
-  Settings as SettingsIcon
-} from 'lucide-react';
+  User,
+  Shield,
+  Trash2,
+  PlusCircle,
+  AlertCircle,
+  Search,
+} from "lucide-react";
+import { Input } from "../ui/input";
+import { supabase } from "../../supabaseClient";
+import { formatDistanceToNow } from "date-fns";
 
-interface Log {
+interface ActivityLog {
   id: string;
-  timestamp: string;
-  actionType: string;
-  performedBy: string;
-  affectedEntity: string;
-  oldValue?: string;
-  newValue?: string;
-  ipAddress: string;
-  category: 'match' | 'admin' | 'tournament' | 'system';
+  user_id: string;
+  admin_name?: string; // We will join this manually
+  action_type: "INSERT" | "UPDATE" | "DELETE";
+  entity_type: string;
+  entity_name: string;
+  created_at: string;
 }
 
 export function ActivityLogs() {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [filterDate, setFilterDate] = useState('');
-  const [filterCategory, setFilterCategory] = useState('all');
+  const [logs, setLogs] = useState<ActivityLog[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
 
-  const mockLogs: Log[] = [
-    {
-      id: '1',
-      timestamp: '2024-11-21 14:35:22',
-      actionType: 'Match Started',
-      performedBy: 'scorer@example.com',
-      affectedEntity: 'Match #12 (Tournament: State Championship)',
-      ipAddress: '192.168.1.45',
-      category: 'match'
-    },
-    {
-      id: '2',
-      timestamp: '2024-11-21 14:20:15',
-      actionType: 'Admin Suspended',
-      performedBy: 'admin@kho-kho.com',
-      affectedEntity: 'Admin: John Doe',
-      oldValue: 'Active',
-      newValue: 'Suspended',
-      ipAddress: '192.168.1.100',
-      category: 'admin'
-    },
-    {
-      id: '3',
-      timestamp: '2024-11-21 13:45:08',
-      actionType: 'Tournament Created',
-      performedBy: 'john@example.com',
-      affectedEntity: 'Tournament: Inter College Championship',
-      ipAddress: '192.168.1.67',
-      category: 'tournament'
-    },
-    {
-      id: '4',
-      timestamp: '2024-11-21 13:30:42',
-      actionType: 'Score Updated',
-      performedBy: 'scorer@example.com',
-      affectedEntity: 'Match #8 (Team A vs Team B)',
-      oldValue: 'Score: 12',
-      newValue: 'Score: 14',
-      ipAddress: '192.168.1.45',
-      category: 'match'
-    },
-    {
-      id: '5',
-      timestamp: '2024-11-21 12:15:30',
-      actionType: 'System Settings Changed',
-      performedBy: 'admin@kho-kho.com',
-      affectedEntity: 'Match Rules: Turn Duration',
-      oldValue: '7 minutes',
-      newValue: '9 minutes',
-      ipAddress: '192.168.1.100',
-      category: 'system'
-    },
-    {
-      id: '6',
-      timestamp: '2024-11-21 11:50:18',
-      actionType: 'Admin Created',
-      performedBy: 'admin@kho-kho.com',
-      affectedEntity: 'Admin: Sarah Khan',
-      ipAddress: '192.168.1.100',
-      category: 'admin'
-    },
-    {
-      id: '7',
-      timestamp: '2024-11-21 11:20:05',
-      actionType: 'Match Completed',
-      performedBy: 'scorer@example.com',
-      affectedEntity: 'Match #5 (Tournament: District Cup)',
-      ipAddress: '192.168.1.45',
-      category: 'match'
-    },
-    {
-      id: '8',
-      timestamp: '2024-11-21 10:45:12',
-      actionType: 'Team Added',
-      performedBy: 'john@example.com',
-      affectedEntity: 'Tournament: State Championship',
-      ipAddress: '192.168.1.67',
-      category: 'tournament'
-    },
-  ];
+  useEffect(() => {
+    fetchLogs();
 
-  const [logs, setLogs] = useState(mockLogs);
+    // Real-time listener: If an admin does something while you are watching, it pops up!
+    const channel = supabase
+      .channel("activity_logs_realtime")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "activity_logs" },
+        (payload) => {
+          const newLog = payload.new as ActivityLog;
+          // Ideally we fetch the name, but for live updates 'Unknown' is fine momentarily
+          setLogs((prev) => [newLog, ...prev]);
+        }
+      )
+      .subscribe();
 
-  const getCategoryIcon = (category: string) => {
-    switch (category) {
-      case 'match':
-        return <Activity className="w-4 h-4 text-blue-600" />;
-      case 'admin':
-        return <User className="w-4 h-4 text-purple-600" />;
-      case 'tournament':
-        return <Trophy className="w-4 h-4 text-green-600" />;
-      case 'system':
-        return <SettingsIcon className="w-4 h-4 text-orange-600" />;
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  const fetchLogs = async () => {
+    setLoading(true);
+    // 1. Fetch Logs
+    const { data: logData, error } = await supabase
+      .from("activity_logs")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(50); // Hard limit to prevent UI crash
+
+    if (error) {
+      console.error("Error fetching logs", error);
+    } else if (logData) {
+      // 2. Fetch Admin Names (Manually join because Supabase doesn't support deep joins on Auth users easily)
+      const userIds = [
+        ...new Set(logData.map((log) => log.user_id).filter(Boolean)),
+      ];
+
+      const { data: profiles } = await supabase
+        .from("profiles")
+        .select("id, name")
+        .in("id", userIds);
+
+      const nameMap: Record<string, string> = {};
+      profiles?.forEach((p) => {
+        nameMap[p.id] = p.name;
+      });
+
+      const enrichedLogs = logData.map((log) => ({
+        ...log,
+        admin_name: nameMap[log.user_id] || "Unknown Admin",
+      }));
+
+      setLogs(enrichedLogs);
+    }
+    setLoading(false);
+  };
+
+  const getIcon = (type: string) => {
+    switch (type) {
+      case "INSERT":
+        return <PlusCircle className="w-4 h-4 text-green-500" />;
+      case "DELETE":
+        return <Trash2 className="w-4 h-4 text-red-500" />;
+      case "UPDATE":
+        return <AlertCircle className="w-4 h-4 text-orange-500" />;
       default:
-        return <Activity className="w-4 h-4 text-gray-600" />;
+        return <Activity className="w-4 h-4 text-blue-500" />;
     }
   };
 
-  const getCategoryBadge = (category: string) => {
-    switch (category) {
-      case 'match':
-        return <Badge className="bg-blue-100 text-blue-700 border-blue-200 border">Match</Badge>;
-      case 'admin':
-        return <Badge className="bg-purple-100 text-purple-700 border-purple-200 border">Admin</Badge>;
-      case 'tournament':
-        return <Badge className="bg-green-100 text-green-700 border-green-200 border">Tournament</Badge>;
-      case 'system':
-        return <Badge className="bg-orange-100 text-orange-700 border-orange-200 border">System</Badge>;
+  const getActionColor = (type: string) => {
+    switch (type) {
+      case "INSERT":
+        return "bg-green-100 text-green-800 border-green-200";
+      case "DELETE":
+        return "bg-red-100 text-red-800 border-red-200";
+      case "UPDATE":
+        return "bg-orange-100 text-orange-800 border-orange-200";
       default:
-        return <Badge className="bg-gray-100 text-gray-700 border-gray-200 border">{category}</Badge>;
+        return "bg-gray-100 text-gray-800";
     }
   };
 
-  const filteredLogs = logs.filter(log => {
-    const matchesSearch = log.actionType.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         log.performedBy.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         log.affectedEntity.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory = filterCategory === 'all' || log.category === filterCategory;
-    return matchesSearch && matchesCategory;
-  });
+  const filteredLogs = logs.filter(
+    (log) =>
+      log.entity_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      log.admin_name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      log.entity_type.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
-        <div>
-          <h2 className="text-gray-900">Activity Logs</h2>
-          <p className="text-sm text-gray-600">Monitor all platform activities and changes</p>
+    <Card className="h-[600px] flex flex-col shadow-md border-gray-200">
+      <CardHeader className="border-b bg-gray-50/50 pb-4">
+        <div className="flex items-center justify-between">
+          <CardTitle className="flex items-center gap-2 text-gray-800">
+            <Shield className="w-5 h-5 text-blue-600" />
+            System Activity Log
+          </CardTitle>
+          <Badge variant="outline" className="bg-white">
+            Last 50 Actions
+          </Badge>
         </div>
-        <Button variant="outline" className="text-gray-700 border-gray-300">
-          <Download className="w-4 h-4 mr-2" />
-          Export Logs
-        </Button>
-      </div>
-
-      {/* Filters Section */}
-      <Card className="border-gray-200">
-        <CardContent className="p-4">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-            <div className="md:col-span-2">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <Input
-                  placeholder="Search logs..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-10"
-                />
-              </div>
-            </div>
-
-            <div>
-              <Select value={filterCategory} onValueChange={setFilterCategory}>
-                <SelectTrigger>
-                  <SelectValue placeholder="All Categories" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Categories</SelectItem>
-                  <SelectItem value="match">Match</SelectItem>
-                  <SelectItem value="admin">Admin</SelectItem>
-                  <SelectItem value="tournament">Tournament</SelectItem>
-                  <SelectItem value="system">System</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div>
-              <Input
-                type="date"
-                value={filterDate}
-                onChange={(e) => setFilterDate(e.target.value)}
-              />
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Statistics Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card className="border-gray-200">
-          <CardContent className="p-4">
-            <p className="text-sm text-gray-600 mb-1">Total Events Today</p>
-            <p className="text-2xl text-gray-900">248</p>
-          </CardContent>
-        </Card>
-        <Card className="border-gray-200">
-          <CardContent className="p-4">
-            <p className="text-sm text-gray-600 mb-1">Match Activities</p>
-            <p className="text-2xl text-gray-900">142</p>
-          </CardContent>
-        </Card>
-        <Card className="border-gray-200">
-          <CardContent className="p-4">
-            <p className="text-sm text-gray-600 mb-1">Admin Actions</p>
-            <p className="text-2xl text-gray-900">68</p>
-          </CardContent>
-        </Card>
-        <Card className="border-gray-200">
-          <CardContent className="p-4">
-            <p className="text-sm text-gray-600 mb-1">System Changes</p>
-            <p className="text-2xl text-gray-900">12</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Logs Table */}
-      <Card className="border-gray-200">
-        <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr>
-                  <th className="text-left py-3 px-4 text-sm text-gray-600">Timestamp</th>
-                  <th className="text-left py-3 px-4 text-sm text-gray-600">Category</th>
-                  <th className="text-left py-3 px-4 text-sm text-gray-600">Action Type</th>
-                  <th className="text-left py-3 px-4 text-sm text-gray-600">Performed By</th>
-                  <th className="text-left py-3 px-4 text-sm text-gray-600">Affected Entity</th>
-                  <th className="text-left py-3 px-4 text-sm text-gray-600">Changes</th>
-                  <th className="text-left py-3 px-4 text-sm text-gray-600">IP Address</th>
-                  <th className="text-right py-3 px-4 text-sm text-gray-600">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredLogs.map((log) => (
-                  <tr key={log.id} className="border-b border-gray-100 hover:bg-gray-50">
-                    <td className="py-3 px-4 text-sm text-gray-900 whitespace-nowrap">
-                      {log.timestamp}
-                    </td>
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-2">
-                        {getCategoryIcon(log.category)}
-                        {getCategoryBadge(log.category)}
-                      </div>
-                    </td>
-                    <td className="py-3 px-4 text-sm text-gray-900">
-                      {log.actionType}
-                    </td>
-                    <td className="py-3 px-4 text-sm text-gray-900">
-                      {log.performedBy}
-                    </td>
-                    <td className="py-3 px-4 text-sm text-gray-900 max-w-[250px]">
-                      <div className="truncate" title={log.affectedEntity}>
-                        {log.affectedEntity}
-                      </div>
-                    </td>
-                    <td className="py-3 px-4 text-sm">
-                      {log.oldValue && log.newValue ? (
-                        <div className="flex items-center gap-1">
-                          <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 text-xs">
-                            {log.oldValue}
-                          </Badge>
-                          <span className="text-gray-400">→</span>
-                          <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 text-xs">
-                            {log.newValue}
-                          </Badge>
-                        </div>
-                      ) : (
-                        <span className="text-gray-400 text-xs">-</span>
-                      )}
-                    </td>
-                    <td className="py-3 px-4 text-sm text-gray-600">
-                      {log.ipAddress}
-                    </td>
-                    <td className="py-3 px-4">
-                      <div className="flex items-center justify-end gap-1">
-                        {log.category === 'match' && (
-                          <>
-                            <Button 
-                              variant="ghost" 
-                              size="sm" 
-                              className="text-gray-600 hover:text-orange-600"
-                              title="Lock Match"
-                            >
-                              <Lock className="w-4 h-4" />
-                            </Button>
-                            <Button 
-                              variant="ghost" 
-                              size="sm" 
-                              className="text-gray-600 hover:text-blue-600"
-                              title="Rollback"
-                            >
-                              <RotateCcw className="w-4 h-4" />
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Pagination */}
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-600">
-          Showing {filteredLogs.length} of {logs.length} logs
-        </p>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" disabled>
-            Previous
-          </Button>
-          <Button variant="outline" size="sm" className="bg-blue-600 text-white border-blue-600">
-            1
-          </Button>
-          <Button variant="outline" size="sm">
-            2
-          </Button>
-          <Button variant="outline" size="sm">
-            3
-          </Button>
-          <Button variant="outline" size="sm">
-            Next
-          </Button>
+        <div className="relative mt-2">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-gray-400" />
+          <Input
+            placeholder="Search by admin, action, or record..."
+            className="pl-9 bg-white"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
         </div>
-      </div>
-    </div>
+      </CardHeader>
+      <CardContent className="p-0 flex-1 overflow-hidden">
+        <ScrollArea className="h-full">
+          {loading ? (
+            <div className="p-8 text-center text-gray-500">
+              Loading activity...
+            </div>
+          ) : filteredLogs.length === 0 ? (
+            <div className="p-8 text-center text-gray-500">
+              No recent activity found.
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {filteredLogs.map((log) => (
+                <div
+                  key={log.id}
+                  className="flex items-start gap-4 p-4 hover:bg-gray-50 transition-colors"
+                >
+                  <div className="mt-1 bg-white p-2 rounded-full border shadow-sm">
+                    {getIcon(log.action_type)}
+                  </div>
+                  <div className="flex-1 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-medium text-gray-900">
+                        {log.admin_name}
+                      </p>
+                      <span className="text-xs text-gray-500">
+                        {formatDistanceToNow(new Date(log.created_at), {
+                          addSuffix: true,
+                        })}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge
+                        variant="secondary"
+                        className={`text-[10px] px-1.5 py-0 h-5 border ${getActionColor(
+                          log.action_type
+                        )}`}
+                      >
+                        {log.action_type}
+                      </Badge>
+                      <span className="text-xs text-gray-600">
+                        {log.entity_type.replace(/_/g, " ")}:{" "}
+                        <span className="font-medium text-gray-900">
+                          {log.entity_name || "Unknown Item"}
+                        </span>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </ScrollArea>
+      </CardContent>
+    </Card>
   );
 }

@@ -13,7 +13,7 @@ import {
   Trophy,
   AlertCircle,
 } from "lucide-react";
-import { Tournament, Match, Team } from "../../types";
+import { Tournament } from "../../types";
 import { supabase } from "../../supabaseClient";
 import { toast } from "sonner";
 import {
@@ -28,7 +28,7 @@ import {
 } from "../ui/alert-dialog";
 import { useNavigate } from "react-router-dom";
 import { TournamentDetailsPage } from "./TournamentDetailsPage";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
+import { Dialog, DialogContent } from "../ui/dialog";
 
 interface DbTournament extends Tournament {
   level?: string;
@@ -50,9 +50,16 @@ export function TournamentsPage() {
 
   const fetchTournaments = async () => {
     setLoading(true);
+    // 1. Get current user
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    // 2. Fetch tournaments filtering by THIS user only
     const { data, error } = await supabase
       .from("tournaments")
       .select("*")
+      .eq("user_id", user?.id) // <--- CRITICAL FILTER
       .order("created_at", { ascending: false });
 
     if (error) {
@@ -76,6 +83,7 @@ export function TournamentsPage() {
   const handleDeleteTournament = async () => {
     if (!tournamentToDelete) return;
 
+    // RLS Policy already prevents deleting other's data, but this is a double check
     const { error } = await supabase
       .from("tournaments")
       .delete()

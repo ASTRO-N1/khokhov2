@@ -47,17 +47,32 @@ export function AdminHome() {
     const fetchDashboardData = async () => {
       setLoading(true);
       try {
-        const matchesPromise = supabase.from("matches").select(`
+        // 1. Get Current User ID to filter data
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (!user) return;
+
+        // 2. Fetch Matches (Filtered by user_id)
+        // We added user_id to matches table, so we can filter directly
+        const matchesPromise = supabase
+          .from("matches")
+          .select(
+            `
             id, match_number, status, match_datetime, venue, score_a, score_b,
             team_a:teams!matches_team_a_id_fkey(id, name, captain_name),
             team_b:teams!matches_team_b_id_fkey(id, name, captain_name),
             tournament:tournaments(id, name),
             scorer:profiles(name)
-          `);
+          `
+          )
+          .eq("user_id", user.id); // <--- CRITICAL FILTER: Only my matches
 
+        // 3. Fetch Teams Count (Filtered by user_id)
         const teamsCountPromise = supabase
           .from("teams")
-          .select("id", { count: "exact", head: true });
+          .select("id", { count: "exact", head: true })
+          .eq("user_id", user.id); // <--- CRITICAL FILTER: Only my teams
 
         const [matchesResult, teamsCountResult] = await Promise.all([
           matchesPromise,

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
+import { Card, CardContent } from "../ui/card";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
 import { Input } from "../ui/input";
@@ -12,7 +12,7 @@ import {
   Trash2,
   AlertCircle,
 } from "lucide-react";
-import { Team, Tournament } from "../../types";
+import { Team } from "../../types";
 import {
   Accordion,
   AccordionContent,
@@ -50,9 +50,17 @@ export function TeamsPage() {
 
   async function fetchTeams() {
     setLoading(true);
+
+    // 1. Get Current User
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    // 2. Fetch MY Teams only
     const { data: teamsData, error: teamsError } = await supabase
       .from("teams")
       .select("*, tournament:tournaments(name)")
+      .eq("user_id", user?.id) // <--- FILTER ADDED
       .order("name");
 
     if (teamsError) {

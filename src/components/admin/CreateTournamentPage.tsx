@@ -10,16 +10,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
-import { Calendar as CalendarIcon, ArrowLeft, Users } from "lucide-react"; // Renamed Calendar icon import
+import { Calendar as CalendarIcon, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "../../supabaseClient";
-import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover"; // Import Popover components
-import { Calendar } from "../ui/calendar"; // Import Calendar component
-import { cn } from "../ui/utils"; // Import cn utility
-import { format, parseISO } from "date-fns"; // Import date-fns functions
+import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
+import { Calendar } from "../ui/calendar";
+import { cn } from "../ui/utils";
+import { format, parseISO } from "date-fns";
+import { useSubscriptionLimits } from "../../hooks/useSubscriptionLimits"; // 1. Import Hook
+import { LimitReachedModal } from "../common/LimitReachedModal"; // 2. Import Modal
 
 interface CreateTournamentPageProps {
-  tournamentId?: string; // Make tournamentId an optional prop
+  tournamentId?: string;
   onBack?: () => void;
   onSuccess?: () => void;
 }
@@ -46,9 +48,12 @@ export function CreateTournamentPage({
   const isEditMode = !!tournamentId;
   const [startDate, setStartDate] = useState<Date | undefined>(undefined);
   const [endDate, setEndDate] = useState<Date | undefined>(undefined);
-  // Add state for popover open/close
   const [isStartDatePickerOpen, setIsStartDatePickerOpen] = useState(false);
   const [isEndDatePickerOpen, setIsEndDatePickerOpen] = useState(false);
+
+  // 3. Init Hooks
+  const { checkLimit, planName } = useSubscriptionLimits();
+  const [showLimitModal, setShowLimitModal] = useState(false);
 
   useEffect(() => {
     if (isEditMode) {
@@ -58,7 +63,7 @@ export function CreateTournamentPage({
           .from("tournaments")
           .select("*")
           .eq("id", tournamentId)
-          .single(); // Use .single() to get one record
+          .single();
 
         if (error) {
           toast.error(`Error fetching tournament data: ${error.message}`);
@@ -76,13 +81,10 @@ export function CreateTournamentPage({
             organizer_name: data.organizer_name || "",
             playing_players: data.playing_players?.toString() || "7",
           });
-          // Set initial dates for the calendar pickers if they exist
           if (data.start_date) {
             try {
               setStartDate(parseISO(data.start_date));
             } catch (e) {
-              console.error("Error parsing start date:", data.start_date, e);
-              // Optionally set to undefined or show an error
               setStartDate(undefined);
             }
           }
@@ -90,7 +92,6 @@ export function CreateTournamentPage({
             try {
               setEndDate(parseISO(data.end_date));
             } catch (e) {
-              console.error("Error parsing end date:", data.end_date, e);
               setEndDate(undefined);
             }
           }
@@ -101,31 +102,26 @@ export function CreateTournamentPage({
     }
   }, [tournamentId, isEditMode]);
 
-  const substitutePlayers = 15 - parseInt(formData.playing_players || "7");
-
-  // Updated handler
   const handleStartDateSelect = (date: Date | undefined) => {
     if (date) {
       setStartDate(date);
       setFormData({ ...formData, start_date: format(date, "yyyy-MM-dd") });
-      // Ensure end date is not before start date
       if (endDate && date > endDate) {
         setEndDate(date);
         setFormData({ ...formData, end_date: format(date, "yyyy-MM-dd") });
       }
-      setIsStartDatePickerOpen(false); // Close the popover
+      setIsStartDatePickerOpen(false);
     } else {
       setStartDate(undefined);
       setFormData({ ...formData, start_date: "" });
     }
   };
 
-  // Updated handler
   const handleEndDateSelect = (date: Date | undefined) => {
     if (date) {
       setEndDate(date);
       setFormData({ ...formData, end_date: format(date, "yyyy-MM-dd") });
-      setIsEndDatePickerOpen(false); // Close the popover
+      setIsEndDatePickerOpen(false);
     } else {
       setEndDate(undefined);
       setFormData({ ...formData, end_date: "" });
@@ -134,6 +130,14 @@ export function CreateTournamentPage({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // 4. CHECK LIMIT (Only on Create)
+    // If we are NOT in edit mode, check if they have room for another tournament
+    if (!isEditMode && !checkLimit("tournaments")) {
+      setShowLimitModal(true);
+      return;
+    }
+
     if (!formData.start_date || !formData.end_date) {
       toast.error("Please select both a start and end date.");
       return;
@@ -344,7 +348,6 @@ export function CreateTournamentPage({
                 </div>
               </div>
 
-              {/* --- UPDATED DATE PICKERS WITH POPOVER CONTROL --- */}
               <div className="grid md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="startDate">Start Date</Label>
@@ -372,7 +375,7 @@ export function CreateTournamentPage({
                       <Calendar
                         mode="single"
                         selected={startDate}
-                        onSelect={handleStartDateSelect} // Use updated handler
+                        onSelect={handleStartDateSelect}
                         initialFocus
                       />
                     </PopoverContent>
@@ -405,7 +408,7 @@ export function CreateTournamentPage({
                       <Calendar
                         mode="single"
                         selected={endDate}
-                        onSelect={handleEndDateSelect} // Use updated handler
+                        onSelect={handleEndDateSelect}
                         disabled={{ before: startDate }}
                         initialFocus
                       />
@@ -413,7 +416,6 @@ export function CreateTournamentPage({
                   </Popover>
                 </div>
               </div>
-              {/* --- END OF UPDATED DATE PICKERS --- */}
 
               <div className="grid md:grid-cols-2 gap-4">
                 <div className="space-y-2">
@@ -475,6 +477,14 @@ export function CreateTournamentPage({
           )}
         </CardContent>
       </Card>
+
+      {/* 5. ADD MODAL */}
+      <LimitReachedModal
+        isOpen={showLimitModal}
+        onClose={() => setShowLimitModal(false)}
+        resource="Tournaments"
+        currentPlan={planName}
+      />
     </div>
   );
 }

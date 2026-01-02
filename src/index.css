@@ -290,7 +290,21 @@
     -webkit-text-decoration: underline dotted;
     text-decoration: underline dotted;
   }
+  input:not([type="checkbox"]):not([type="radio"]),
+  textarea,
+  select {
+    border-width: 1px !important; /* Force width */
+    border-style: solid !important; /* Force style */
+    border-color: #cbd5e1 !important; /* Force Color (Slate-300) */
+  }
 
+  /* Optional: Make it darker when focused */
+  input:not([type="checkbox"]):not([type="radio"]):focus,
+  textarea:focus,
+  select:focus {
+    border-color: #2563eb !important; /* Blue-600 */
+    outline: none !important;
+  }
   h1,
   h2,
   h3,

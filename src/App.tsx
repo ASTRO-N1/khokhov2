@@ -62,7 +62,7 @@ import { Security } from "./components/super-admin/Security";
 
 // --- Landing Page Import ---
 import { LandingPage } from "./components/landing/LandingPage";
-
+import { PricingPage } from "./components/landing/PricingPage";
 import { mockMatches } from "./utils/mockData";
 import {
   User as UserType,
@@ -965,13 +965,20 @@ export default function App() {
       setSessionChecked(true);
     };
     checkSession();
+
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) fetchAndSetUserProfile(session.user);
-      else {
+      if (session?.user) {
+        fetchAndSetUserProfile(session.user);
+      } else {
         setCurrentUser(null);
-        navigate("/", { replace: true });
+
+        // --- THE FIX IS HERE ---
+        // Only redirect to home if we are NOT on the pricing page
+        if (window.location.pathname !== "/pricing") {
+          navigate("/", { replace: true });
+        }
       }
     });
     return () => subscription.unsubscribe();
@@ -1046,6 +1053,7 @@ export default function App() {
     <>
       <Toaster position="top-right" />
       <Routes>
+        <Route path="/pricing" element={<PricingPage />} />
         <Route
           path="/"
           element={

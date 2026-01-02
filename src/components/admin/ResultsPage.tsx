@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
+import { useState, useEffect } from "react";
+import { Card, CardContent, CardHeader } from "../ui/card";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
 import { Input } from "../ui/input";
@@ -13,14 +13,87 @@ import {
   TableHeader,
   TableRow,
 } from "../ui/table";
+import { supabase } from "../../supabaseClient";
+import { toast } from "sonner";
 
 interface ResultsPageProps {
-  matches: Match[];
   onViewResult: (matchId: string) => void;
 }
 
-export function ResultsPage({ matches, onViewResult }: ResultsPageProps) {
+export function ResultsPage({ onViewResult }: ResultsPageProps) {
+  const [matches, setMatches] = useState<Match[]>([]);
+  const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+
+  useEffect(() => {
+    fetchResults();
+  }, []);
+
+  const fetchResults = async () => {
+    setLoading(true);
+    try {
+      // 1. Get Current User
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      // 2. Fetch FINISHED matches created by THIS user
+      const { data, error } = await supabase
+        .from("matches")
+        .select(
+          `
+          id,
+          match_number,
+          match_datetime,
+          venue,
+          status,
+          score_a,
+          score_b,
+          tournament_id,
+          tournaments ( name ),
+          team_a:teams!matches_team_a_id_fkey ( id, name, captain_name ),
+          team_b:teams!matches_team_b_id_fkey ( id, name, captain_name )
+        `
+        )
+        .eq("user_id", user?.id) // <--- CRITICAL FILTER: My matches only
+        .eq("status", "finished") // Only show finished matches in Results
+        .order("match_datetime", { ascending: false });
+
+      if (error) throw error;
+
+      if (data) {
+        const formattedMatches: Match[] = data.map((m: any) => ({
+          id: m.id,
+          matchNumber: m.match_number || "N/A",
+          tournamentName: m.tournaments?.name || "Unknown",
+          tournamentId: m.tournament_id,
+          teamA: {
+            id: m.team_a?.id,
+            name: m.team_a?.name || "Unknown",
+            captain: m.team_a?.captain_name,
+            players: [],
+          },
+          teamB: {
+            id: m.team_b?.id,
+            name: m.team_b?.name || "Unknown",
+            captain: m.team_b?.captain_name,
+            players: [],
+          },
+          dateTime: m.match_datetime,
+          venue: m.venue,
+          status: m.status,
+          scoreA: m.score_a,
+          scoreB: m.score_b,
+          scorerName: "", // Not strictly needed for this view
+        }));
+        setMatches(formattedMatches);
+      }
+    } catch (error: any) {
+      toast.error("Error fetching results: " + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const filteredMatches = matches.filter(
     (match) =>
@@ -72,59 +145,83 @@ export function ResultsPage({ matches, onViewResult }: ResultsPageProps) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredMatches.map((match) => (
-                  <TableRow key={match.id}>
-                    <TableCell className="font-medium">
-                      {match.matchNumber}
-                    </TableCell>
-                    <TableCell>{match.tournamentName}</TableCell>
-                    <TableCell>
-                      <div>
-                        <p>{match.teamA.name}</p>
-                        <p className="text-gray-500">vs</p>
-                        <p>{match.teamB.name}</p>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div>
-                        <p
-                          className={
-                            match.scoreA! > match.scoreB! ? "" : "text-gray-500"
-                          }
-                        >
-                          {match.teamA.name}: {match.scoreA}
-                        </p>
-                        <p
-                          className={
-                            match.scoreB! > match.scoreA! ? "" : "text-gray-500"
-                          }
-                        >
-                          {match.teamB.name}: {match.scoreB}
-                        </p>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      {new Date(match.dateTime).toLocaleDateString()}
-                    </TableCell>
-                    <TableCell>
-                      <Badge className="bg-blue-600">
-                        <CheckCircle className="w-3 h-3 mr-1" />
-                        Verified
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => onViewResult(match.id)}
-                        className="bg-blue-600 hover:bg-blue-700 text-white"
-                      >
-                        <Eye className="w-4 h-4 mr-2" />
-                        View Result
-                      </Button>
+                {loading ? (
+                  <TableRow>
+                    <TableCell
+                      colSpan={7}
+                      className="text-center py-8 text-gray-500"
+                    >
+                      Loading results...
                     </TableCell>
                   </TableRow>
-                ))}
+                ) : filteredMatches.length === 0 ? (
+                  <TableRow>
+                    <TableCell
+                      colSpan={7}
+                      className="text-center py-8 text-gray-500"
+                    >
+                      No finished matches found.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  filteredMatches.map((match) => (
+                    <TableRow key={match.id}>
+                      <TableCell className="font-medium">
+                        {match.matchNumber}
+                      </TableCell>
+                      <TableCell>{match.tournamentName}</TableCell>
+                      <TableCell>
+                        <div>
+                          <p>{match.teamA.name}</p>
+                          <p className="text-gray-500">vs</p>
+                          <p>{match.teamB.name}</p>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div>
+                          <p
+                            className={
+                              (match.scoreA ?? 0) > (match.scoreB ?? 0)
+                                ? "font-bold text-green-600"
+                                : "text-gray-500"
+                            }
+                          >
+                            {match.teamA.name}: {match.scoreA}
+                          </p>
+                          <p
+                            className={
+                              (match.scoreB ?? 0) > (match.scoreA ?? 0)
+                                ? "font-bold text-green-600"
+                                : "text-gray-500"
+                            }
+                          >
+                            {match.teamB.name}: {match.scoreB}
+                          </p>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        {new Date(match.dateTime).toLocaleDateString()}
+                      </TableCell>
+                      <TableCell>
+                        <Badge className="bg-blue-600">
+                          <CheckCircle className="w-3 h-3 mr-1" />
+                          Verified
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => onViewResult(match.id)}
+                          className="bg-blue-600 hover:bg-blue-700 text-white"
+                        >
+                          <Eye className="w-4 h-4 mr-2" />
+                          View Result
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
               </TableBody>
             </Table>
           </div>

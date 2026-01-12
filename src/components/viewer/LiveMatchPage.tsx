@@ -99,7 +99,7 @@ export function LiveMatchPage({ match, onBack }: LiveMatchPageProps) {
 
     // Realtime subscription
     const subscription = supabase
-      .channel(`match-viewer-timer-${match.id}`)
+      .channel(`match-viewer${match.id}`)
       .on(
         "postgres_changes",
         {

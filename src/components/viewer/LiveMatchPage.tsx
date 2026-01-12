@@ -99,7 +99,7 @@ export function LiveMatchPage({ match, onBack }: LiveMatchPageProps) {
 
     // Realtime subscription
     const subscription = supabase
-      .channel(`match-viewer-${match.id}`)
+      .channel(`match-viewer-timer-${match.id}`)
       .on(
         "postgres_changes",
         {
@@ -410,7 +410,9 @@ export function LiveMatchPage({ match, onBack }: LiveMatchPageProps) {
 
             <Card className="border-gray-200">
               <CardHeader className="pb-2">
-                <CardTitle className="text-base">Top Attackers (Live)</CardTitle>
+                <CardTitle className="text-base">
+                  Top Attackers (Live)
+                </CardTitle>
               </CardHeader>
               <CardContent className="p-0">
                 {attackerSummary.length > 0 ? (
